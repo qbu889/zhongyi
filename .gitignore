@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Logs & local artifacts
+*.log
+herb_err.log
+
+# JetBrains IDE
+.idea/
+*.iml
+
+# macOS
+.DS_Store
