@@ -1,0 +1,15 @@
+{
+  "name": "grill-me",
+  "displayName": "Grill Me",
+  "version": "0.1.0",
+  "description": "A relentless multi-round interview that stress-tests a plan, design, or idea until every decision is explicitly settled.",
+  "descriptionZh": "以多轮\"拷问式\"访谈压力测试你的方案、设计或想法，逐轮逼出每一个未明确的设计决策，直到达成共识。",
+  "author": { "name": "Matt Pocock" },
+  "homepage": "https://github.com/mattpocock/skills",
+  "repository": "https://github.com/mattpocock/skills",
+  "logo": "./assets/avatar.svg",
+  "keywords": ["qoder-plugin", "skill", "grill", "interview", "planning", "design-review"],
+  "category": "developer-tools",
+  "tags": ["skill", "productivity"],
+  "skills": "./skills/"
+}
