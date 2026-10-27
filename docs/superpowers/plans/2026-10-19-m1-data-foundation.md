@@ -651,7 +651,7 @@ git commit -m "feat(m1): distilled corpus manifest + norm/table_rows reuse"
   - `parse_herbs.merge(...) -> list[HerbRecord]`（把味/脏归类合并进 herb 记录）
 - Consumes: `normalizers`
 
-- [ ] **Step 1: 写失败测试（用真实样例行）**
+- [x] **Step 1: 写失败测试（用真实样例行）**
 
 `backend/tests/unit/test_parse_herbs.py`:
 ```python
@@ -692,12 +692,12 @@ def test_merge_fills_taste_group():
     assert all(isinstance(r, parse_herbs.HerbRecord) for r in merged)
 ```
 
-- [ ] **Step 2: 运行验证失败**
+- [x] **Step 2: 运行验证失败**
 
 Run: `cd backend && python -m pytest tests/unit/test_parse_herbs.py -v`
 Expected: FAIL。
 
-- [ ] **Step 3: 实现解析器**
+- [x] **Step 3: 实现解析器**
 
 `backend/app/etl/parse_herbs.py`:
 ```python
@@ -775,12 +775,12 @@ def merge(zy: list[HerbRecord], taste_map: dict[str, tuple[str, str]]) -> list[H
 
 > 说明：`药物按味归类.md` 存在同名跨味（如"黄连"仅在苦味，测试样例把它同时写进酸/苦两段以覆盖 setdefault 语义）。真实语料每药一味，`merge` 不做多味拼接。`丹砂` 在 `中药库` 有、`药物按味归类` 未必有（按味只覆盖有明确"味X"标注者），允许 `taste_group` 为空。
 
-- [ ] **Step 4: 跑绿**
+- [x] **Step 4: 跑绿**
 
 Run: `cd backend && python -m pytest tests/unit/test_parse_herbs.py -v`
 Expected: PASS。若 `test_parse_zhongyao_basic` 的性味断言不稳，确认样例云母行含「味甘性平」——断言 `taste=="甘" or nature=="平"` 二者命中其一即可。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/etl/parse_herbs.py backend/tests/unit/test_parse_herbs.py
