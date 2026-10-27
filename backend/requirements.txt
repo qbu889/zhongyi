@@ -1,0 +1,16 @@
+# M1 运行 + 测试依赖（PRD §5.1 选型；计划 Task 1 Step 3）
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+pydantic-settings==2.*
+sqlalchemy==2.*
+psycopg[binary]==3.*
+pgvector==0.3.*
+numpy==1.26.*
+httpx==0.27.*
+pytest==8.*
+
+# 仅 @pytest.mark.integration 用例需要（真实 BGE-M3 加载 / 全量 reindex）。
+# 计划 Task 1 Step 3 明确允许在轻量环境注释掉；本地不装可省 ~1GB，
+# 单测一律走 HashingEmbedder（Global Constraints：单测不得下载模型）。
+# sentence-transformers==3.*
+# torch==2.4.*

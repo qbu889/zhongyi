@@ -15,3 +15,6 @@ herb_err.log
 
 # macOS
 .DS_Store
+
+# pytest
+.pytest_cache/

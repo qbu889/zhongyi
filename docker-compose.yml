@@ -1,0 +1,23 @@
+# NFR-7：单条 compose 可起（API + DB + 前端）。M1 只交付 DB 与 backend 构建，
+# 前端在 M4 接入后追加 service。
+#
+# 注意（2026-10-28 环境记录）：本机 Homebrew pgvector bottle 仅提供 postgresql@17/@18
+# 产物，无法给本地 PG 16.15 装 vector 扩展，因此**本地开发直接用 brew 的 postgresql@16**，
+# 不依赖本文件的 db 服务；本文件作为 CI / 部署产物保留（CI 内可用 pgvector 镜像）。
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: zhongyi
+      POSTGRES_PASSWORD: zhongyi
+      POSTGRES_DB: zhongyi_dev
+    ports: ["5433:5432"]          # 避开本机 brew PG 占用的 5432
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zhongyi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
