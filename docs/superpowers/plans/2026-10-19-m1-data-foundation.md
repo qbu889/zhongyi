@@ -532,7 +532,7 @@ git commit -m "feat(m1): add §5.3 ORM models + index_version + db fixtures"
   - `normalizers.table_rows(text) -> list[list[str]]`（转调 `LOADER.search.table_rows`）
 - Consumes: `scripts_loader.LOADER`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `backend/tests/unit/test_corpus.py`:
 ```python
@@ -562,12 +562,12 @@ def test_norm_and_table_rows_reused():
     assert rows == [["a", "b"], ["1", "2"]]   # 分隔行被丢弃
 ```
 
-- [ ] **Step 2: 运行验证失败**
+- [x] **Step 2: 运行验证失败**
 
 Run: `cd backend && python -m pytest tests/unit/test_corpus.py -v`
 Expected: FAIL。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `backend/app/etl/normalizers.py`:
 ```python
@@ -623,12 +623,12 @@ def read_rel(path: Path) -> tuple[str, str]:
 
 > `formula_source`（伤寒/金匮方库）也在收录内但 `classify` 单列，供 Task 5 采集 source_text/indication；若某路径同时命中多条规则，`_RULES` 顺序即优先级。
 
-- [ ] **Step 4: 跑绿**
+- [x] **Step 4: 跑绿**
 
 Run: `cd backend && python -m pytest tests/unit/test_corpus.py -v`
 Expected: PASS（注意 test_classify 未断言 formula_source，Task 5 会补）。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/etl/corpus.py backend/app/etl/normalizers.py backend/tests/unit/test_corpus.py
