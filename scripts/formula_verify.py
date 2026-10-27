@@ -57,15 +57,59 @@ def normalize(name):
     name = re.sub(r'[（(].*?[）)]', '', name).strip()
     return SYNONYM.get(name, name)
 
+# ---- 方名归一（2026-10-28 修正，见 PRD §5.6 D7 / 附录 C）------------------
+# 旧实现 `([一-鿿]{2,8}汤方?)` 有三处缺陷，均已实测确认：
+#   1. 只认「汤」——丸/散/饮/膏/丹 退化到 `·` 兜底，54 行抽出幽灵名 "—"；
+#   2. 不剥「方」尾——`乌梅丸` 与 `乌梅丸方` 成两个身份，交叉校验永远碰不上面；
+#   3. 贪婪截断——「桂枝汤加葛根」被切成「桂枝汤」，把加减方并进母方（误合并）。
+FORMS = '汤丸散饮膏丹酒'
+FORM_RE = re.compile('([一-鿿]{2,12}?(?:[' + FORMS + ']|方)(?![一-鿿]))')
+GHOST_RE = re.compile(r'^[—－\-\s·.。:：]*$')
+SEP_ROW_RE = re.compile(r'^[|\s:-]+$')
+# 「…的基础方」「治疗的处方」是病证描述，不是方名；方剂名不含「的」
+DESCRIPTIVE_RE = re.compile(r'的|治疗|基础方|经验方|处方|验方')
+
+
+def normalize_formula_name(name):
+    """剥掉「方」尾缀（乌梅丸方→乌梅丸），保留真以「方」结尾的方名（温经方）。"""
+    name = re.sub(r'[（(].*?[）)]', '', name).strip()
+    if len(name) > 2 and name.endswith('方') and name[-2] in FORMS:
+        return name[:-1]
+    return name
+
+
+def is_ghost_name(name):
+    return not name or bool(GHOST_RE.match(name))
+
+
+def is_descriptive_name(name):
+    """病证描述被误当方名的排除口径（backend 复用，不另写一套）。"""
+    return bool(name) and bool(DESCRIPTIVE_RE.search(name))
+
+
+def formula_base(name_field):
+    """从「病证描述 · 方名」混排字段取方名；取不到返回 None（交人工，不造名）。"""
+    m = FORM_RE.search(name_field)
+    base = normalize_formula_name(m.group(1)) if m else ''
+    if not base or is_descriptive_name(base) or is_ghost_name(base):
+        # 退到 `·` 尾段——语料该字段的权威方名就写在最后一段
+        tail = normalize_formula_name(name_field.split('·')[-1].strip())
+        if is_ghost_name(tail) or is_descriptive_name(tail):
+            return None
+        return tail
+    return base
+
+
 def parse_ancient(path):
     """经方组成库 -> {方名: {药材: 古剂量文本}}"""
     src = open(path, encoding='utf-8').read()
     out = {}
     for ln in src.split('\n'):
-        if not ln.startswith('|') or '方名' in ln[:6]: continue
+        if not ln.startswith('|') or SEP_ROW_RE.match(ln): continue
         parts = [p.strip() for p in ln.strip('|').split('|')]
-        if len(parts) < 3: continue
+        if len(parts) < 3 or parts[0] == '方名': continue
         name, comp = parts[0], parts[2]
+        if is_ghost_name(name): continue
         herbs = {}
         for nm, dose in re.findall(r'\*\*([^*]+?)\*\*\s*(.+?)(?=；|$)', comp):
             nrm = normalize(nm)
@@ -79,12 +123,12 @@ def parse_gram(path):
     src = open(path, encoding='utf-8').read()
     out = {}
     for ln in src.split('\n'):
-        if not ln.startswith('|') or '# |' in ln[:6]: continue
+        if not ln.startswith('|') or SEP_ROW_RE.match(ln): continue
         parts = [p.strip() for p in ln.strip('|').split('|')]
-        if len(parts) < 3: continue
+        if len(parts) < 3 or parts[0] == '#': continue
         name_field, comp = parts[1], parts[2]
-        m = re.search(r'([一-鿿]{2,8}汤方?|瓜蒌薤白.*半夏汤)', name_field)
-        base = m.group(1) if m else name_field.split('·')[-1].strip()
+        base = formula_base(name_field)
+        if base is None: continue          # 抽不出真方名：跳过而非塞进幽灵键 "—"
         # 按逗号分割，精确提取 [药材][数字/半]
         herbs = {}
         for seg in comp.split(','):
