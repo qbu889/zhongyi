@@ -12,15 +12,40 @@
 
 ## Global Constraints
 
-- Python 版本 **3.11**（sentence-transformers/torch 要求；宿主系统 python 为 3.9.6，一切运行都在容器或 3.11 venv 内，见 Task 1）。
-- 数据库 **PostgreSQL 16 + pgvector**，仅经 Docker Compose 提供；测试库 `zhongyi_test`，连接串走 `DATABASE_URL` 环境变量。
-- 语料 `distilled/` **只读**，ETL 不得写回 `distilled/`；索引版本绑定其 git commit hash（NFR-6），当前基准 hash = `03722d428f9a`。
-- ETL 收录清单（§1 现状问题）：编号子目录 `01`~`06` 下所有 `.md` + 顶层 `方剂库-经典配方.md` / `方剂库-经方组成.md` / `汉唐方剂索引.md`；**排除** 任意路径的 `README.md`、文件名含全角括号 `（）()` 的陈旧副本、以及 `03-金匮/方剂交叉校验.md`、`03-金匮/方剂剂量换算.md`（这两个是产物非源）。
-- 剂量换算标准唯一来源 = `scripts/dose_convert.py`：`1两=15g`、`1斤=8两=120g`；输出只出克、古制在 `conversion_note` 留痕（NFR-4）。
+> **2026-10-28 修订**：原计划基于 PRD §5.3 单层 `formula` 模型；现 PRD **§5.6 已定稿三层非对称模型**（D6/D7/D8），
+> Task 2/5/6 的 Interfaces 已按 §5.6 重写，**其中保留的旧代码块若与 Interfaces 冲突，一律以 Interfaces 为准**。
+> 同日实测的环境与脚本缺陷已并入下方约束。
+
+- Python 版本 **3.11**（sentence-transformers/torch 要求）。实测宿主默认 `python3` = **3.13.3**（不是原写的 3.9.6），
+  `3.11` 在 `/opt/homebrew/bin/python3.11`；venv 显式用它创建，禁止依赖 `python3` 解析结果。
+- 数据库 **PostgreSQL 16 + pgvector**。**2026-10-28 决策**：本机已有 Homebrew `postgresql@16` 16.15 且运行于 `5432`，
+  **本地开发直接使用它**（`pg_isready` 已确认可连）；`pgvector` 经 `brew install pgvector` 安装。
+  `docker-compose.yml` **仍按 NFR-7 交付**（部署产物 / CI 用），但本地任务不得因容器不可用而阻塞——实测 Docker CLI 存在而 daemon 与容器运行时均缺失。
+  测试库 `zhongyi_test`，连接串走 `DATABASE_URL` 环境变量。
+- 语料 `distilled/` **只读**，ETL 不得写回 `distilled/`；索引版本绑定其 git commit hash（NFR-6）。
+  ⚠️ M0 前置仍未做：`distilled/汉唐方剂索引.md`、`distilled/02-伤寒论/临证诊断与治则补充.md` 权限为 `0600`。
+- **ETL 收录清单以 PRD 附录 A 为准**（13 份收录 / 4 份排除，含逐文件行数与字符实测）：编号子目录 `01`~`06` 下源文档
+  + 顶层 `方剂库-经典配方.md` / `方剂库-经方组成.md` / `汉唐方剂索引.md`；**排除**任意路径 `README.md`、
+  `03-金匮/方剂交叉校验.md`、`03-金匮/方剂剂量换算.md`（产物非源）。全角括号副本规则已确认无匹配文件，保留为防御性兜底。
+  注意 **行数 ≠ 实体数**：金匮/伤寒两库一行方名列可含多个 `「方名」`，经方组成有「一行四方」，实体数须在身份抽取后统计。
+- **`scripts/` 允许修改（2026-10-28 决策，取代原「不改脚本」约束）**：`formula_verify.py` 的方名身份逻辑有已证实缺陷
+  （`parse_gram` 正则 `[一-鿿]{2,8}汤方?` 只认「汤」，把加减方截断成母方；`方` 尾未剥离致 `乌梅丸`↔`乌梅丸方` 分裂；
+  fallback 产生幽灵键 `—`；`parse_ancient` 未过滤分隔行致 242 行出 243 个名、含 `---`）。
+  修正在 **脚本内**完成并附回归测试，backend 继续 `importlib` 复用，**保持「口径唯一来源在 scripts/」不变**。
+  `distilled/03-金匮/方剂交叉校验.md` 是旧脚本的历史产物，**不得作为输入被解析**（PRD 附录 A 已判为产物非源）。
+- 身份纪律（PRD §5.6 D6）：**宁可分裂，不可误合并**。加减方独立成方 + `formula_alias` 指回母方；
+  抽不出方名/一行多方/低置信 → `status=candidate` 进候选队列，**禁止 fallback 造名**（D7）。
+- 变体配对（D8）：配对结果 **物化为 `formula_variant_pair`**（带 `algorithm_version`），不在请求路径跑 Jaccard。
+  一期实测覆盖率仅 **70/242 ≈ 29%**，其余显示「未交叉校验」蓝牌，属正常态。
+- 剂量换算标准唯一来源 = `scripts/dose_convert.py`：`1两=15g`、`1斤=8两=120g`、`升/合≈50g(近似)`、
+  `枚参考值仅 附子/山茱萸=15g`；`分`=比例、`铢` **脚本无分支** → 一律落 `dose_state`，
+  非 `exact` 不得写入 `dose_g`（PRD FR-3 五态、附录 B）。实测 1197 个数据点中 31% 转不成克。
+  ⚠️ 原 Task 5 断言 `半夏 半升 → 150.0g` 是错的，脚本实际 `0.5×50=25.0g`（`150.0` 属三合），已改正。
 - 交叉校验口径唯一来源 = `scripts/formula_verify.py`：药材名去炮制前缀+同义词归一化；剂量偏差阈值 >50%。
 - embedding 维度 **1024**（bge-m3）；`chunk_vector.embedding vector(1024)`。
 - 所有单测**不得**下载/加载真实模型（用确定性 fake embedder）；真实 BGE-M3 仅在带 `@pytest.mark.integration` 的用例中加载。
-- 每个 Task 结束跑 `pytest` 全绿并提交一次（frequent commits）。
+- 每个 Task 结束跑 `pytest` 全绿并提交一次（frequent commits）。当前工作分支 `feat/m1-data-foundation`。
+
 
 ---
 
@@ -94,7 +119,7 @@ backend/
   - `app.etl.scripts_loader.LOADER` 暴露 `.search`（含 `norm`,`table_rows`,`build_records`）、`.dose`（含 `convert`）、`.verify`（含 `verify`,`normalize`）三个模块对象
 - Consumes: 无（首个任务）
 
-- [ ] **Step 1: 写失败测试（脚手架 + 复用脚本可加载）**
+- [x] **Step 1: 写失败测试（脚手架 + 复用脚本可加载）**
 
 `backend/tests/unit/test_scaffold.py`:
 ```python
@@ -117,12 +142,12 @@ def test_search_norm_reused_from_scripts():
     assert scripts_loader.LOADER.search.norm("第３页ＡＢＣ") == " ABC"
 ```
 
-- [ ] **Step 2: 运行验证失败**
+- [x] **Step 2: 运行验证失败**
 
 Run: `cd backend && python -m pytest tests/unit/test_scaffold.py -v`
 Expected: FAIL（ModuleNotFoundError / no app）。
 
-- [ ] **Step 3: 依赖与配置**
+- [x] **Step 3: 依赖与配置**
 
 `backend/requirements.txt`:
 ```
@@ -165,7 +190,7 @@ class Settings(BaseSettings):
 settings = Settings()
 ```
 
-- [ ] **Step 4: app 主入口与 db session**
+- [x] **Step 4: app 主入口与 db session**
 
 `backend/app/main.py`:
 ```python
@@ -192,7 +217,7 @@ def get_sessionmaker(engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, future=True)
 ```
 
-- [ ] **Step 5: importlib 载入 scripts（单一事实源）**
+- [x] **Step 5: importlib 载入 scripts（单一事实源）**
 
 `backend/app/etl/scripts_loader.py`:
 ```python
@@ -224,7 +249,7 @@ LOADER = _Loader(
 
 > 注意：`scripts/search.py` 顶部有 `REPO = "/Users/..."` 硬编码路径，但 `norm`/`table_rows`/`build_records` 中只有 `build_records` 用到 `DIST`。本任务只用到 `norm`；`build_records` 的全量遍历在 Task 7 用 `corpus.py` 取代，不改脚本。若 `import` 触发 CLI 逻辑，确认三脚本均以 `if __name__ == '__main__':` 守卫（已核实）。
 
-- [ ] **Step 6: Docker 基础设施**
+- [x] **Step 6: Docker 基础设施**
 
 `docker-compose.yml`:
 ```yaml
@@ -256,7 +281,7 @@ COPY . .
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-- [ ] **Step 7: 建测试库并跑绿**
+- [x] **Step 7: 建测试库并跑绿**
 
 Run:
 ```bash
@@ -266,7 +291,7 @@ cd backend && python -m pytest tests/unit/test_scaffold.py -v
 ```
 Expected: PASS（3 项）。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add docker-compose.yml backend
@@ -275,7 +300,10 @@ git commit -m "chore(m1): scaffold FastAPI backend, pgvector compose, importlib 
 
 ---
 
-## Task 2: 数据模型（§5.3 全表 + 索引版本）
+## Task 2: 数据模型（**PRD §5.6 三层方剂模型** + 其余实体 + 索引版本）
+
+> ⚠️ 本 Task 原有的 Step 1 测试样例与 Step 3 模型代码块按旧单层 `formula`/`formula_herb` 写就，
+> **已作废**；实现时以下方 Interfaces 为准重写（不得沿用 `Formula.source_doc` / `verify_status` 单列方案）。
 
 **Files:**
 - Create: `backend/app/db/models.py`
@@ -285,16 +313,23 @@ git commit -m "chore(m1): scaffold FastAPI backend, pgvector compose, importlib 
 **Interfaces:**
 - Produces（SQLAlchemy 2.x `DeclarativeBase`，类名 → 表名）：
   - `Base`
-  - `Formula` → 表 `formula`：`id, name, source_doc, section, formula_no, indication, ancient_text, verify_status`（`verify_status` ∈ `{'一致','药材差异','仅单版本'}`，默认 `仅单版本`）
-  - `FormulaHerb` → `formula_herb`：`id, formula_id(FK), herb_id(FK nullable), herb_name, dose_ancient, dose_g(Float|None), conversion_note`
-  - `Herb` → `herb`：`id, name, flavor, nature, effects, indications, dosage_note, taboo, taste_group, organ_group`
+  - `Formula` → `formula`：`id, canonical_name(unique), anchor ∈ {'override','jingfang_zucheng','candidate'}, status ∈ {'confirmed','candidate','split_parent'}, note`
+  - `FormulaAlias` → `formula_alias`：`id, formula_id(FK), name, doc, kind ∈ {'古名','现代名','汤方尾巴','加减写法','一行多方拆分'}`；`(name, doc)` 唯一
+  - `FormulaDoseVariant` → `formula_dose_variant`：`id, formula_id(FK), source_doc ∈ {'经方组成','经典配方','override'}, dose_basis ∈ {'ancient','gram'}, ordinal, source_row_no, raw_composition(Text), parse_confidence(Float|None), extract_rule_version`
+  - `FormulaItem` → `formula_item`：`id, variant_id(FK), herb_id(FK nullable), herb_text, dose_text, dose_g(Float|None), dose_state ∈ {'exact','approx','count_only','absent','unknown_unit'}, preparation, conversion_note`
+  - `FormulaEvidence` → `formula_evidence`：`id, formula_id(FK), source_doc ∈ {'伤寒六经方库','金匮方剂库','医案','汉唐索引'}, six_jing, bing_duan, clause_no, formula_no, original_text(Text), source_row_no`
+  - `FormulaVariantPair` → `formula_variant_pair`：`id, formula_id(FK), variant_a(FK), variant_b(FK), pairing_method ∈ {'declared','algorithmic'}, herb_diff(JSONB), dose_dev(JSONB), score(Float), algorithm_version, verified_at(DateTime)`
+  - `Herb` → `herb`：`id, name(本经古名, unique), alias(ARRAY|JSONB), flavor(Text|None), flavor_source_state ∈ {'extracted','missing'}, effects, indications, dosage_note, taboo, preparation, raw_note(Text), taste_group(可 NULL：实测378/379), organ_group`
   - `Acupoint` → `acupoint`：`id, name, meridian, role, location, actions`
   - `AcupointSymptom` → `acupoint_symptom`：`id, acupoint_id(FK), symptom, source_doc`
-  - `Case` → `case`：`id, no, category, chief_complaint, pathogenesis, treatment_formula_ids, tips, raw_md`
+  - `Case` → `case`：`id, no, category, chief_complaint, pathogenesis, treatment_formula_ids, added_herbs(随证加味，与主方分列), tips, raw_md`
   - `FrameworkChunk` → `framework_chunk`：`id, doc, section, content, chunk_order`
   - `ChunkVector` → `chunk_vector`：`id, ref_type, ref_id, content, embedding Vector(1024)`
-  - `IndexVersion` → `index_version`：`id, commit_hash, created_at, formula_count, herb_count, acupoint_count, case_count, chunk_count, status`
+  - `PendingFormulaName` → `pending_formula_name`（FR-13 ⑦ 候选队列，D7 的落点）：`id, raw_name, doc, source_row_no, suggested_parent(FK→formula|None), confidence, evidence_text, decision ∈ {'pending','confirmed_new','merged','noise'}, decided_by, decided_at`
+  - `IndexVersion` → `index_version`：`id, commit_hash, created_at, formula_count, herb_count, acupoint_count, case_count, chunk_count, status, embedding_model_version, chunking_version, extract_rule_version`（NFR-6 需同时锁模型与抽取规则版本）
 - Consumes: `app.db.session.make_engine`
+- 约束要点：`formula_item.dose_g` 仅当 `dose_state='exact'` 或 `'approx'` 可非空；`herb_id` 为空者必须能在 FR-13 ⑤ 清单里被查出（不得静默）。
+
 
 - [ ] **Step 1: 写失败测试（建表 + 回读）**
 
@@ -754,24 +789,37 @@ git commit -m "feat(m1): 中药库 herb parser + 五味归类 merge"
 
 ---
 
-## Task 5: 经方组成 ETL（formula + formula_herb + 剂量换算）
+## Task 5: 经方组成 ETL（**§5.6：formula + formula_dose_variant + formula_item** + 剂量换算）
 
 **Files:**
-- Create: `backend/app/etl/dose.py`, `backend/app/etl/parse_formulas.py`
-- Create: `backend/tests/unit/test_parse_formulas.py`
+- Create: `backend/app/etl/dose.py`, `backend/app/etl/parse_formulas.py`, `backend/app/etl/identity.py`
+- Modify: `scripts/formula_verify.py`（`normalize` 增 `方` 尾剥离、`parse_gram`/`parse_ancient` 过滤分隔行与幽灵键）
+- Create: `backend/tests/unit/test_parse_formulas.py`, `backend/tests/unit/test_identity.py`, `scripts/tests/test_formula_verify.py`
 
 **Interfaces:**
 - Produces:
-  - `dose.convert(dose_text: str, herb: str = "") -> tuple[float | None, str]`（转调 `LOADER.dose.convert`）
-  - `parse_formulas.FormulaRecord`（`name, source_doc, section, composition: list[HerbDose]`），`HerbDose`（`herb_name, dose_ancient, dose_g, conversion_note`）
-  - `parse_formulas.parse_ancient(text: str, source_doc: str) -> list[FormulaRecord]`（解析 `方剂库-经方组成.md`：`| 方名 | 来源 | 组成 |`，来源列填 `section`；对每味用 `dose.convert` 填 `dose_g`/`conversion_note`；过滤"剂量见原书"噪声行）
-- Consumes: `normalizers`, `dose`, `scripts_loader.LOADER.dose`
+  - `dose.convert(dose_text, herb="") -> (g|None, note, dose_state)` —— 在原 `(g, note)` 基础上**必须补第三项状态**，
+    按 PRD FR-3/附录 B 映射：`两/斤/钱→exact`、`升/合/枚(参考值)→approx`、`枚/个/茎/片无参考值→count_only`、
+    `分/等分/见原书→absent`、`无可识别单位(如 铢)→unknown_unit`。判定依据是脚本 `note` 文本，
+    **不得在 backend 重算克数**。
+  - `identity.extract_formula_name(field: str) -> list[NameCandidate]` —— `NameCandidate(name, confidence, kind)`；
+    剂型全集正则（汤/丸/散/饮/膏/丹/酒/方）+ 剥 `方` 尾 + 优先 `·` 尾段 + **一行多方拆分**；
+    全部失败 → 返回空列表（**进候选队列，不 fallback 造名**）。
+  - `identity.split_parent(name) -> str|None` —— 加减方识别（`桂枝汤加葛根` → 母方 `桂枝汤`），
+    供 `formula_alias(kind=加减写法)`；**加减方自身仍是独立 formula**。
+  - `parse_formulas.parse_ancient(text, source_doc) -> list[AncientFormula]` ——
+    `AncientFormula(name, source_claim ∈ {伤寒,金匮,伤寒+金匮}, herbs: list[Item])`，
+    `Item(herb_text, dose_text, dose_g, dose_state, preparation, conversion_note)`；
+    产出映射到 `formula_dose_variant(dose_basis='ancient')` + `formula_item`。
+  - 幽灵键回归：`parse_ancient` 对 `|---|---|` 分隔行必须跳过（实测旧脚本 242 行出 243 名，含 `---`）。
+- Consumes: `normalizers`, `dose`, `scripts_loader.LOADER.dose`/`LOADER.verify`
+
 
 - [ ] **Step 1: 写失败测试（真实桂枝汤/射干麻黄汤行）**
 
 `backend/tests/unit/test_parse_formulas.py`:
 ```python
-from app.etl import parse_formulas, dose
+from app.etl import parse_formulas, dose, identity
 
 SAMPLE = """
 | 方名 | 来源 | 组成（药味·剂量·炮制） |
@@ -780,33 +828,66 @@ SAMPLE = """
 | 射干麻黄汤 | 金匮 | **射干** 三两；**麻黄** 四两；**半夏** 半升 |
 """
 
-def test_convert_reused():
-    assert dose.convert("三两", "桂枝") == (45.0, "三两 → 3两×15g=45.0g")
+def test_convert_returns_state_too():
+    # 旧签名 (g, note) 不够：升/枚/分/铢 必须带状态（PRD FR-3 五态）
+    assert dose.convert("三两", "桂枝") == (45.0, "三两 → 3两×15g=45.0g", "exact")
+    assert dose.convert("十二枚", "大枣")[2] == "count_only"
+    assert dose.convert("二分", "甘草")[0] is None and dose.convert("二分", "甘草")[2] == "absent"
+    assert dose.convert("十八铢", "猪苓")[2] == "unknown_unit"   # 脚本无「铢」分支
 
 def test_parse_ancient_guizhi():
     recs = {r.name: r for r in parse_formulas.parse_ancient(SAMPLE, "方剂库-经方组成.md")}
     g = recs["桂枝汤"]
-    assert g.section == "伤寒"
-    assert len(g.composition) == 5
-    first = g.composition[0]
-    assert first.herb_name == "桂枝"
-    assert first.dose_g == 45.0
-    assert first.dose_ancient.startswith("三两")
+    assert g.source_claim == "伤寒"
+    assert len(g.herbs) == 5
+    first = g.herbs[0]
+    assert first.herb_text == "桂枝"
+    assert first.dose_g == 45.0 and first.dose_state == "exact"
+    assert first.preparation == "去皮"
+    # 大枣十二枚：不得臆造克数
+    z = [h for h in g.herbs if h.herb_text == "大枣"][0]
+    assert z.dose_g is None and z.dose_state == "count_only" and z.dose_text == "十二枚（劈）"
 
-def test_parse_ancient_filters_noise():
-    # "（剂量见原书）"行不产出 dose_g，但仍保留药名
-    s = "| 乌头汤 | 金匮 | **麻黄** （剂量见原书）；**甘草** （剂量见原书） |"
-    r = parse_formulas.parse_ancient(s, "方剂库-经方组成.md")[0]
-    assert {h.herb_name for h in r.composition} >= {"麻黄", "甘草"}
-    assert all(h.dose_g is None for h in r.composition)
+def test_parse_ancient_skips_separator_row():
+    # 旧脚本缺陷：|---|---| 被当成一方 → 242 行出 243 名（含幽灵键 "---"）
+    recs = parse_formulas.parse_ancient(SAMPLE, "x")
+    assert all(r.name.strip("-— ") for r in recs)
+    assert "---" not in {r.name for r in recs}
 
 def test_shema_dose():
     recs = {r.name: r for r in parse_formulas.parse_ancient(SAMPLE, "x")}
-    x = {h.herb_name: h for h in recs["射干麻黄汤"].composition}
-    assert x["射干"].dose_g == 45.0      # 三两
-    assert x["麻黄"].dose_g == 60.0      # 四两
-    assert x["半夏"].dose_g == 150.0     # 半升 → 0.5×50... 见实现说明(升≈50g,半升=25g)
+    x = {h.herb_text: h for h in recs["射干麻黄汤"].herbs}
+    assert x["射干"].dose_g == 45.0 and x["射干"].dose_state == "exact"   # 三两
+    assert x["麻黄"].dose_g == 60.0 and x["麻黄"].dose_state == "exact"   # 四两
+    # 半升 = 0.5×~50g = 25.0g（approx）。注意：原计划的 150.0 是错的，150 属「三合」；
+    # 而 PRD 原 §5.4 的「半斤=180g」同样错（实为 0.5斤×120g=60g）。
+    assert x["半夏"].dose_g == 25.0 and x["半夏"].dose_state == "approx"
+
+def test_identity_extracts_all_dosage_forms():
+    # 旧正则只认「汤」→ 丸/散/饮 全退化；且必须剥「方」尾，修 乌梅丸↔乌梅丸方 分裂
+    # 语料真实行：#100「温经方」与 #8「温经汤」是两组不同组成，D6 下**不得自动合并**
+    assert identity.extract_formula_name(
+        "治疗不孕的基础方 — 出自<伤寒杂病论>--温经方 · 温经方")[0].name == "温经方"
+    assert identity.extract_formula_name("… · 乌梅丸方")[0].name == "乌梅丸"
+    assert identity.extract_formula_name("治疗急性乳腺炎的处方 · —") == []      # 造不出名 → 候选队列
+
+def test_identity_splits_multi_formula_row():
+    # 语料真实行：经典配方 方#28 一行连写四首
+    names = [c.name for c in identity.extract_formula_name(
+        "出自<伤寒杂病论>--桂枝汤,当归散,白术散,当归生姜羊肉汤 · 桂枝汤,当归散,白术散,当归生姜羊肉汤")]
+    assert set(names) == {"桂枝汤", "当归散", "白术散", "当归生姜羊肉汤"}
+
+def test_identity_split_parent():
+    # 语料真实行：方#61 桂枝汤加葛根、方#72 桂枝汤加厚朴和杏仁 → 独立成方，母方指回桂枝汤
+    assert identity.split_parent("桂枝汤加葛根") == "桂枝汤"
+    assert identity.split_parent("桂枝汤加厚朴和杏仁") == "桂枝汤"
+    assert identity.split_parent("桂枝汤") is None
 ```
+
+> **回归护栏（必做）**：以上 4 个测试的输入串全部逐字取自 `distilled/方剂库-经典配方.md`
+> 方#28/#61/#72/#100，改动语料后须同步；断言的克数一律来自 `python3 scripts/dose_convert.py` 的实际输出，
+> 不得凭记忆填写（PRD 附录 B 已记录两处历史错误：`半斤=180g`、`半升=150g`）。
+
 
 - [ ] **Step 2: 运行验证失败**
 
@@ -897,12 +978,21 @@ git commit -m "feat(m1): 经方组成 parser + dose 换算复用 dose_convert"
 - Create: `backend/tests/unit/test_parse_classics.py`
 
 **Interfaces:**
-- Consumes: `parse_formulas.FormulaRecord`, `dose`, `normalizers`, `LOADER.verify.normalize`（药材名归一化）
+- Consumes: `identity`（Task 5）, `dose`, `normalizers`, `scripts_loader.LOADER.verify.normalize`（药材名归一）
 - Produces:
-  - `parse_classics.ClassicFormula`（`no:int|None, name, herbs: list[(归一化药名, 克数float|None)]`）
-  - `parse_classics.parse_classic(text: str) -> list[ClassicFormula]`（解析 `方剂库-经典配方.md`：`| # | 病证/方名 | 组成 | 备注 |`，方名取 `·` 后段，组成按逗号切 `药名 N克`）
-  - `parse_classics.parse_source_text(text: str, doc: str) -> dict[str, str]`（解析 `伤寒六经方库.md`/`金匮方剂库.md`：`方名(去「」) -> 原文/主证节选`，供 `formula.ancient_text`/`indication`）
-- Consumes: `scripts_loader.LOADER.verify`
+  - `parse_classics.ClassicVariant`（`no:int|None, names: list[NameCandidate], herbs: list[(归一化药名, 克数|None, 原文)], remark`）
+  - `parse_classics.parse_classic(text) -> list[ClassicVariant]`（`| # | 病证/方名 | 组成 | 备注 |`）——
+    方名**必须走 `identity.extract_formula_name`**，不再用 `·` 后段兜底；
+    一行多方（方#28）→ 多个候选；抽不出名（实测 54 行）→ 产 `PendingFormulaName` 而非静默丢弃；
+    组成按逗号切 `药名 N克`，**抽不出药味者不得丢弃整行**（方#28 组成为「孕期 1,」这类非药味文本，
+    旧 `parse_gram` 会因 `if herbs:` 直接丢行）→ 保留行 + `parse_confidence` 降级。
+  - `parse_classics.parse_evidence(text, doc) -> list[EvidenceRow]`（`伤寒六经方库.md`/`金匮方剂库.md`）——
+    每行可含**多个** `「方名」`，逐名产出 `formula_evidence`（带 `clause_no`/`bing_duan`/`original_text`），
+    不再压成 `dict[方名→原文]` 单值；`六经`/`病段` 从所在小节推断。
+    讲稿噪声名（实测金匮有「这都是真武汤」「一样的汤」「主力是桂枝汤」等）须经**方名白名单**过滤，
+    白名单来源 = `override 45 方 ∪ 经方组成 242 方 ∪ 已确认候选`；白名单外 → 候选队列。
+- 覆盖说明：本期 `formula_variant_pair` 预期仅命中约 **29%**（70/242），其余方留空即「未交叉校验」，**不得为凑覆盖率放宽身份判定**。
+
 
 - [ ] **Step 1: 写失败测试**
 
@@ -1130,5 +1220,30 @@ Run: `cd backend && python -m pytest tests/unit/test_parse_acupoints.py -v`（PA
 git add backend/app/etl/parse_acupoints.py backend/tests/unit/test_parse_acupoints.py
 git commit -m "feat(m1): 十二经穴位库 + 治症取穴 parser"
 ```
+
+---
+
+## Task 8–15：M1 后半段（**待细化**，2026-10-28 登记）
+
+原计划到 Task 7 就断了，而 File Structure 声明的 8 个模块一个任务都没有。
+以下按「先修 Task 1-7、后半段边做边补」的决策登记为待办；**每个任务开工前必须先补齐 5 步式分解**，
+不得凭这张表直接写代码。
+
+| # | 任务 | 范围 | 完成判据（可测） |
+|---|---|---|---|
+| 8 | 医案 ETL `parse_cases.py` | `06-医案/临床问答对.md` 叙述体 → `case` 30 条；主方与**随证加味**分列（「射干麻黄汤＋桔梗」）；`treatment_formula_ids` 走 `identity` 解析 | `case` 计数 = 30（`问NN` 唯一编号实测 30）；加味不入主方 `formula_item` |
+| 9 | 框架 ETL `parse_framework.py` | `01/02/04/06` 的框架类文档 → `framework_chunk`；小节边界即切片边界 | 实测数据行：核心理论 10 / 六经框架 17 / 临证补充 25；七条基准可被 FR-5 问诊卡消费 |
+| 10 | 药材归一与 `herb_id` 关联 | 古名↔现代名（实测 `牡桂`=桂枝、`茈胡`=柴胡、`杏仁` 在库内无此行）+ 炮制前缀；**复用改造后的 `formula_verify.normalize`** | FR-13 ⑤ 悬空数清零；提问「柴胡」「茈胡」命中同一 `herb` |
+| 11 | `verify.py` + `formula_variant_pair` 落库（D8） | 调 `formula_verify.verify`，配对结果物化，写 `algorithm_version`；黄牌/灰勾/蓝牌三态数据齐备 | 配对数 ≈ 70（±语料修订）；`乌梅丸`↔`乌梅丸方` 分裂对已归一；无 `—`/`---` 幽灵方 |
+| 12 | `loaders.py` 幂等 upsert | 解析记录 → ORM；按 `(canonical_name)` / `(variant, herb_text)` 等自然键 upsert，重复 reindex 不产生重复行 | 连跑两次 reindex，各表计数不变 |
+| 13 | `embed/`：切片 + Embedder | `chunk.py`（表格行/医案条/框架小节）+ `embedder.py`（`HashingEmbedder` 单测用、`BgeM3Embedder` 仅 integration）+ `indexer.py` | 单测**不下载模型**；`chunk_vector.embedding` 维度 1024；`chunking_version` 落 `index_version` |
+| 14 | `admin/reindex.py` + `git_utils.py` | 全流程编排：corpus → parse → identity → verify → load → embed；绑 `distilled/` git hash；**蓝绿切换**（重建期间旧索引可用，PRD 6.6） | `GET /healthz` 与 `POST /api/admin/reindex` 通；`index_version` 至少两行且旧行仍被查询命中 |
+| 15 | `admin/quality.py` + 对外 API | FR-13 七张清单 + `GET /api/admin/quality-report`；候选队列读写（⑦） | 七张清单齐；⑦ 队列规模与附录 C 实测一致（54 行抽不出名 + 6+ 对 `方` 尾分裂） |
+| 16 | M0 前置收口 | `0600` 权限修正（`汉唐方剂索引.md`、`临证诊断与治则补充.md`）；`docker-compose.yml` 交付但本地不依赖 | `git ls-files -s` 权限位为 100644；compose 文件可被 CI 读取（不要求本地可 run） |
+
+**已知的计划外风险（执行到相关任务时须知）**：
+- `scripts/search.py` 顶部 `REPO = "/Users/..."` 硬编码；Task 1 只用 `norm`，全量遍历由 `corpus.py` 取代。
+- pgvector 的 Homebrew bottle **只覆盖 postgresql@17/@18**，本机 PG 16.15 需另行解决（见 2026-10-28 环境记录）。
+
 
 ---
