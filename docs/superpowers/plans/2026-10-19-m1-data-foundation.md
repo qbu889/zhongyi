@@ -36,7 +36,7 @@
 - 身份纪律（PRD §5.6 D6）：**宁可分裂，不可误合并**。加减方独立成方 + `formula_alias` 指回母方；
   抽不出方名/一行多方/低置信 → `status=candidate` 进候选队列，**禁止 fallback 造名**（D7）。
 - 变体配对（D8）：配对结果 **物化为 `formula_variant_pair`**（带 `algorithm_version`），不在请求路径跑 Jaccard。
-  一期实测覆盖率仅 **70/242 ≈ 29%**，其余显示「未交叉校验」蓝牌，属正常态。
+  一期实测覆盖率仅 **77/242 ≈ 32%**（脚本修正后；修正前 70 含误合并假阳性），其余显示「未交叉校验」蓝牌，属正常态。
 - 剂量换算标准唯一来源 = `scripts/dose_convert.py`：`1两=15g`、`1斤=8两=120g`、`升/合≈50g(近似)`、
   `枚参考值仅 附子/山茱萸=15g`；`分`=比例、`铢` **脚本无分支** → 一律落 `dose_state`，
   非 `exact` 不得写入 `dose_g`（PRD FR-3 五态、附录 B）。实测 1197 个数据点中 31% 转不成克。
@@ -815,7 +815,7 @@ git commit -m "feat(m1): 中药库 herb parser + 五味归类 merge"
 - Consumes: `normalizers`, `dose`, `scripts_loader.LOADER.dose`/`LOADER.verify`
 
 
-- [ ] **Step 1: 写失败测试（真实桂枝汤/射干麻黄汤行）**
+- [x] **Step 1: 写失败测试（真实桂枝汤/射干麻黄汤行）**
 
 `backend/tests/unit/test_parse_formulas.py`:
 ```python
@@ -889,12 +889,12 @@ def test_identity_split_parent():
 > 不得凭记忆填写（PRD 附录 B 已记录两处历史错误：`半斤=180g`、`半升=150g`）。
 
 
-- [ ] **Step 2: 运行验证失败**
+- [x] **Step 2: 运行验证失败**
 
 Run: `cd backend && python -m pytest tests/unit/test_parse_formulas.py -v`
 Expected: FAIL。
 
-- [ ] **Step 3: 实现 dose 与 parser**
+- [x] **Step 3: 实现 dose 与 parser**
 
 `backend/app/etl/dose.py`:
 ```python
@@ -957,12 +957,12 @@ def parse_ancient(text: str, source_doc: str) -> list[FormulaRecord]:
 
 > `半夏 半升` → `dose_convert.convert` 对"升"按近似 `n×50g`：`半升`=0.5→`25.0g`，**不是** `150.0`。测试断言以脚本真实输出为准：修正 `test_shema_dose` 的半夏期望为 `25.0`（本 Step 5 跑绿时按实际值锁定；升为容量近似，dose_convert 已在 note 标注"升近似"）。
 
-- [ ] **Step 4: 跑绿**
+- [x] **Step 4: 跑绿**
 
 Run: `cd backend && python -m pytest tests/unit/test_parse_formulas.py -v`
 Expected: PASS（把半夏断言改为 `25.0`）。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/etl/dose.py backend/app/etl/parse_formulas.py backend/tests/unit/test_parse_formulas.py
@@ -983,7 +983,7 @@ git commit -m "feat(m1): 经方组成 parser + dose 换算复用 dose_convert"
   - `parse_classics.ClassicVariant`（`no:int|None, names: list[NameCandidate], herbs: list[(归一化药名, 克数|None, 原文)], remark`）
   - `parse_classics.parse_classic(text) -> list[ClassicVariant]`（`| # | 病证/方名 | 组成 | 备注 |`）——
     方名**必须走 `identity.extract_formula_name`**，不再用 `·` 后段兜底；
-    一行多方（方#28）→ 多个候选；抽不出名（实测 54 行）→ 产 `PendingFormulaName` 而非静默丢弃；
+    一行多方（方#28）→ 多个候选；抽不出名（实测 63 行，脚本修正后）→ 产 `PendingFormulaName` 而非静默丢弃；
     组成按逗号切 `药名 N克`，**抽不出药味者不得丢弃整行**（方#28 组成为「孕期 1,」这类非药味文本，
     旧 `parse_gram` 会因 `if herbs:` 直接丢行）→ 保留行 + `parse_confidence` 降级。
   - `parse_classics.parse_evidence(text, doc) -> list[EvidenceRow]`（`伤寒六经方库.md`/`金匮方剂库.md`）——
@@ -991,7 +991,7 @@ git commit -m "feat(m1): 经方组成 parser + dose 换算复用 dose_convert"
     不再压成 `dict[方名→原文]` 单值；`六经`/`病段` 从所在小节推断。
     讲稿噪声名（实测金匮有「这都是真武汤」「一样的汤」「主力是桂枝汤」等）须经**方名白名单**过滤，
     白名单来源 = `override 45 方 ∪ 经方组成 242 方 ∪ 已确认候选`；白名单外 → 候选队列。
-- 覆盖说明：本期 `formula_variant_pair` 预期仅命中约 **29%**（70/242），其余方留空即「未交叉校验」，**不得为凑覆盖率放宽身份判定**。
+- 覆盖说明：本期 `formula_variant_pair` 预期仅命中约 **32%**（77/242），其余方留空即「未交叉校验」，**不得为凑覆盖率放宽身份判定**。
 
 
 - [ ] **Step 1: 写失败测试**
@@ -1234,7 +1234,7 @@ git commit -m "feat(m1): 十二经穴位库 + 治症取穴 parser"
 | 8 | 医案 ETL `parse_cases.py` | `06-医案/临床问答对.md` 叙述体 → `case` 30 条；主方与**随证加味**分列（「射干麻黄汤＋桔梗」）；`treatment_formula_ids` 走 `identity` 解析 | `case` 计数 = 30（`问NN` 唯一编号实测 30）；加味不入主方 `formula_item` |
 | 9 | 框架 ETL `parse_framework.py` | `01/02/04/06` 的框架类文档 → `framework_chunk`；小节边界即切片边界 | 实测数据行：核心理论 10 / 六经框架 17 / 临证补充 25；七条基准可被 FR-5 问诊卡消费 |
 | 10 | 药材归一与 `herb_id` 关联 | 古名↔现代名（实测 `牡桂`=桂枝、`茈胡`=柴胡、`杏仁` 在库内无此行）+ 炮制前缀；**复用改造后的 `formula_verify.normalize`** | FR-13 ⑤ 悬空数清零；提问「柴胡」「茈胡」命中同一 `herb` |
-| 11 | `verify.py` + `formula_variant_pair` 落库（D8） | 调 `formula_verify.verify`，配对结果物化，写 `algorithm_version`；黄牌/灰勾/蓝牌三态数据齐备 | 配对数 ≈ 70（±语料修订）；`乌梅丸`↔`乌梅丸方` 分裂对已归一；无 `—`/`---` 幽灵方 |
+| 11 | `verify.py` + `formula_variant_pair` 落库（D8） | 调 `formula_verify.verify`，配对结果物化，写 `algorithm_version`；黄牌/灰勾/蓝牌三态数据齐备 | 配对数 = 77（脚本修正后实测）；`乌梅丸`↔`乌梅丸方` 分裂对已归一；无 `—`/`---` 幽灵方 |
 | 12 | `loaders.py` 幂等 upsert | 解析记录 → ORM；按 `(canonical_name)` / `(variant, herb_text)` 等自然键 upsert，重复 reindex 不产生重复行 | 连跑两次 reindex，各表计数不变 |
 | 13 | `embed/`：切片 + Embedder | `chunk.py`（表格行/医案条/框架小节）+ `embedder.py`（`HashingEmbedder` 单测用、`BgeM3Embedder` 仅 integration）+ `indexer.py` | 单测**不下载模型**；`chunk_vector.embedding` 维度 1024；`chunking_version` 落 `index_version` |
 | 14 | `admin/reindex.py` + `git_utils.py` | 全流程编排：corpus → parse → identity → verify → load → embed；绑 `distilled/` git hash；**蓝绿切换**（重建期间旧索引可用，PRD 6.6） | `GET /healthz` 与 `POST /api/admin/reindex` 通；`index_version` 至少两行且旧行仍被查询命中 |
