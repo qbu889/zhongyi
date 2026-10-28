@@ -1007,7 +1007,7 @@ git commit -m "feat(m1): 经方组成 parser + dose 换算复用 dose_convert"
   实测目标：13 行拆对、27 行病证假阳性不动、32 个 spine 独立经方不被劈。
 
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `backend/tests/unit/test_parse_classics.py`:
 ```python
@@ -1040,12 +1040,12 @@ def test_parse_source_text():
     assert "小便不利" in m["五苓散"]
 ```
 
-- [ ] **Step 2: 运行验证失败**
+- [x] **Step 2: 运行验证失败**
 
 Run: `cd backend && python -m pytest tests/unit/test_parse_classics.py -v`
 Expected: FAIL。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `backend/app/etl/parse_classics.py`:
 ```python
@@ -1106,12 +1106,12 @@ def parse_source_text(text: str, doc: str) -> dict[str, str]:
     return m
 ```
 
-- [ ] **Step 4: 跑绿**
+- [x] **Step 4: 跑绿**
 
 Run: `cd backend && python -m pytest tests/unit/test_parse_classics.py -v`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/etl/parse_classics.py backend/tests/unit/test_parse_classics.py
