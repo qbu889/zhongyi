@@ -19,9 +19,17 @@
 - Python 版本 **3.11**（sentence-transformers/torch 要求）。实测宿主默认 `python3` = **3.13.3**（不是原写的 3.9.6），
   `3.11` 在 `/opt/homebrew/bin/python3.11`；venv 显式用它创建，禁止依赖 `python3` 解析结果。
 - 数据库 **PostgreSQL 16 + pgvector**。**2026-10-28 决策**：本机已有 Homebrew `postgresql@16` 16.15 且运行于 `5432`，
-  **本地开发直接使用它**（`pg_isready` 已确认可连）；`pgvector` 经 `brew install pgvector` 安装。
-  `docker-compose.yml` **仍按 NFR-7 交付**（部署产物 / CI 用），但本地任务不得因容器不可用而阻塞——实测 Docker CLI 存在而 daemon 与容器运行时均缺失。
+  **本地开发直接使用它**（`pg_isready` 已确认可连）；`docker-compose.yml` **仍按 NFR-7 交付**（部署产物 / CI 用），
+  但本地任务不得因容器不可用而阻塞——实测 Docker CLI 存在而 daemon 与容器运行时均缺失。
   测试库 `zhongyi_test`，连接串走 `DATABASE_URL` 环境变量。
+  ⚠️ **pgvector 安装实测记录**：`brew install pgvector`（0.8.7）的 bottle **只带 postgresql@17/@18 产物**，
+  给 PG16 装不上（`CREATE EXTENSION vector` 报 not available）。已改为**源码编译 0.8.0**：
+  `git clone --depth 1 --branch v0.8.0 https://github.com/pgvector/pgvector` →
+  `make PG_CONFIG=/opt/homebrew/opt/postgresql@16/bin/pg_config -j4` → 同参 `make install`（无需 sudo，/opt/homebrew 为用户所有）。
+  写入且 **brew 不跟踪**的文件（回滚即删这些）：`lib/postgresql/vector.dylib`、
+  `share/postgresql@16/extension/vector.control` + 35 个 `vector--*.sql`、`include/postgresql/server/extension/vector/*.h`。
+  验收：`CREATE EXTENSION vector` 成功、`vector(4)` 列 + `USING hnsw (emb vector_cosine_ops)` + `<=>` 查询实测通过。
+
 - 语料 `distilled/` **只读**，ETL 不得写回 `distilled/`；索引版本绑定其 git commit hash（NFR-6）。
   ⚠️ M0 前置仍未做：`distilled/汉唐方剂索引.md`、`distilled/02-伤寒论/临证诊断与治则补充.md` 权限为 `0600`。
 - **ETL 收录清单以 PRD 附录 A 为准**（13 份收录 / 4 份排除，含逐文件行数与字符实测）：编号子目录 `01`~`06` 下源文档
@@ -331,7 +339,7 @@ git commit -m "chore(m1): scaffold FastAPI backend, pgvector compose, importlib 
 - 约束要点：`formula_item.dose_g` 仅当 `dose_state='exact'` 或 `'approx'` 可非空；`herb_id` 为空者必须能在 FR-13 ⑤ 清单里被查出（不得静默）。
 
 
-- [ ] **Step 1: 写失败测试（建表 + 回读）**
+- [x] **Step 1: 写失败测试（建表 + 回读）**
 
 `backend/tests/db/test_models_roundtrip.py`:
 ```python
@@ -355,12 +363,12 @@ def test_create_all_and_roundtrip(db_session):
     assert fh.dose_g == 45.0 and fh.herb_name == "桂枝"
 ```
 
-- [ ] **Step 2: 运行验证失败**
+- [x] **Step 2: 运行验证失败**
 
 Run: `cd backend && python -m pytest tests/db/test_models_roundtrip.py -v`
 Expected: FAIL（ImportError `app.db.models`）。
 
-- [ ] **Step 3: 实现模型**
+- [x] **Step 3: 实现模型**
 
 `backend/app/db/models.py`:
 ```python
@@ -476,7 +484,7 @@ def distilled_commit_hash(distilled_dir: Path) -> str:
     return out.stdout.strip()
 ```
 
-- [ ] **Step 4: 补 conftest 的 db_session fixture（每次建表→回滚）**
+- [x] **Step 4: 补 conftest 的 db_session fixture（每次建表→回滚）**
 
 在 `backend/tests/conftest.py` 追加：
 ```python
@@ -504,12 +512,12 @@ def db_session(engine):
     conn.close()
 ```
 
-- [ ] **Step 5: 跑绿**
+- [x] **Step 5: 跑绿**
 
 Run: `docker compose up -d db && cd backend && python -m pytest tests/db/test_models_roundtrip.py -v`
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/db/models.py backend/app/git_utils.py backend/tests
