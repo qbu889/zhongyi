@@ -1133,7 +1133,7 @@ git commit -m "feat(m1): 经典配方现代剂量 + 伤寒/金匮原文节选 pa
   - `parse_acupoints.parse_symptom_points(text: str) -> list[tuple[str, str]]`（解析 `针灸治症取穴.md`：`| # | 病症/主题 | 取穴 | 原文摘录 |` -> (穴名, 症状)）
 - Consumes: `normalizers`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `backend/tests/unit/test_parse_acupoints.py`:
 ```python
@@ -1165,12 +1165,12 @@ def test_parse_symptom_points():
     assert ("大包", "全身脉络之主管") in pairs
 ```
 
-- [ ] **Step 2: 运行验证失败**
+- [x] **Step 2: 运行验证失败**
 
 Run: `cd backend && python -m pytest tests/unit/test_parse_acupoints.py -v`
 Expected: FAIL。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `backend/app/etl/parse_acupoints.py`:
 ```python
@@ -1226,7 +1226,7 @@ def parse_symptom_points(text: str) -> list[tuple[str, str]]:
     return pairs
 ```
 
-- [ ] **Step 4: 跑绿 + Commit**
+- [x] **Step 4: 跑绿 + Commit**
 
 Run: `cd backend && python -m pytest tests/unit/test_parse_acupoints.py -v`（PASS）
 ```bash
@@ -1236,7 +1236,7 @@ git commit -m "feat(m1): 十二经穴位库 + 治症取穴 parser"
 
 ---
 
-## Task 8–15：M1 后半段（**待细化**，2026-10-28 登记）
+## Task 8–16：M1 后半段（**待细化**，2026-10-28 登记）
 
 原计划到 Task 7 就断了，而 File Structure 声明的 8 个模块一个任务都没有。
 以下按「先修 Task 1-7、后半段边做边补」的决策登记为待办；**每个任务开工前必须先补齐 5 步式分解**，
