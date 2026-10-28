@@ -38,9 +38,14 @@ def normalize_name(value: str) -> str:
     return LOADER.verify.normalize_formula_name(norm(value).strip())
 
 
+def _is_descriptive(name: str) -> bool:
+    """病证描述（含「的/治疗/基础方/处方…」）不是方名——判定口径同样委托脚本。"""
+    return bool(LOADER.verify.is_descriptive_name(name))
+
+
 def _confidence(name: str) -> str:
     """剂型结尾为 high；「治疗的处方」这类病证描述不是方名 → low（进候选队列人工确认）。"""
-    if LOADER.verify.is_descriptive_name(name):
+    if _is_descriptive(name):
         return "low"
     return "high" if name and name[-1] in DOSAGE_FORMS + "方" else "low"
 
@@ -91,3 +96,41 @@ def split_parent(name: str) -> str | None:
     """
     m = _MODIFICATION.match(normalize_name(name))
     return m.group(1) if m else None
+
+
+# ---- 合方（pair）拆分：D9–D11 -------------------------------------------------
+# 三层门禁，缺一即误拆（实测 13/13 命中、0 误拆；见 PRD 附录 C-8）：
+#   1. 只在 `·` 尾段调用本函数（调用方负责），保护 27 行病证描述里的「和」；
+#   2. 连接词前一位必须是剂型字，保护 `百合地黄汤` 的「合」不被当连接词；
+#   3. 整名命中 spine 者否决，保护 32 个内含 加/合/各半 的独立经方。
+_PAIR_CONNECTOR = re.compile(
+    r"(?<=[%s])(?:和|与|并|合)(?=\s*(?:[<《][^>》]*[>》]\s*[-–—*]*)?[一-鿿])" % DOSAGE_FORMS
+)
+_SOURCE_MARKER = re.compile(r"^\s*[<《][^>》]*[>》]\s*[-–—*]*")
+
+
+def _strip_source(part: str) -> str:
+    return _SOURCE_MARKER.sub("", part).strip()
+
+
+def split_pair_components(name: str, spine: set[str] | None = None) -> list[str] | None:
+    """两方合用 → [成分方1, 成分方2]；不是合方返回 None。
+
+    `spine` 传入已确认方名集合时，整名命中即判为独立方（第三层门禁）。
+    只支持两方组合，三方组合罕见且更易误判，交人工队列。
+    """
+    cleaned = _strip_source(name.strip())
+    if not cleaned or is_ghost(cleaned):
+        return None
+    if spine and (cleaned in spine or normalize_name(cleaned) in spine):
+        return None
+
+    parts = [_strip_source(p).strip() for p in _PAIR_CONNECTOR.split(cleaned)]
+    if len(parts) != 2:
+        return None
+    if any(not p or p[-1] not in DOSAGE_FORMS + "方" for p in parts):
+        return None
+    if any(_is_descriptive(p) or is_ghost(p) for p in parts):
+        return None
+    return [normalize_name(p) for p in parts]
+

@@ -130,6 +130,36 @@ def test_case_keeps_added_herbs_separate_from_main_formula(db_session):
     assert c.treatment_formula_ids == [f.id] and c.added_herbs == ["桔梗"]
 
 
+def test_pair_formula_with_components(db_session):
+    """D9/D10/D11：合方是一等实体；成分可命中已确认方，也可先落 candidate。"""
+    from app.db.models import FormulaComponent
+
+    zhi = Formula(canonical_name="炙甘草汤", anchor="candidate", status="candidate", kind="single")
+    xiao = Formula(canonical_name="小建中汤", anchor="jingfang_zucheng", status="confirmed", kind="single")
+    pair = Formula(canonical_name="炙甘草汤和小建中汤", anchor="candidate",
+                   status="confirmed", kind="pair")
+    db_session.add_all([zhi, xiao, pair])
+    db_session.flush()
+    db_session.add_all([
+        FormulaComponent(pair_formula_id=pair.id, component_formula_id=zhi.id, ordinal=1),
+        FormulaComponent(pair_formula_id=pair.id, component_formula_id=xiao.id, ordinal=2),
+    ])
+    db_session.commit()
+
+    components = db_session.scalars(
+        select(FormulaComponent).where(FormulaComponent.pair_formula_id == pair.id)
+        .order_by(FormulaComponent.ordinal)).all()
+    assert [c.component_formula_id for c in components] == [zhi.id, xiao.id]
+    assert db_session.get(Formula, pair.id).kind == "pair"
+
+
+def test_single_is_the_default_kind(db_session):
+    f = Formula(canonical_name="麻黄汤", anchor="jingfang_zucheng", status="confirmed")
+    db_session.add(f)
+    db_session.commit()
+    assert db_session.get(Formula, f.id).kind == "single"
+
+
 def test_index_version_locks_corpus_model_and_extractor(db_session):
     db_session.add(IndexVersion(commit_hash="abcdef1234", embedding_model_version="bge-m3",
                                 chunking_version="chunk-2026.10", extract_rule_version="id-2026.10",

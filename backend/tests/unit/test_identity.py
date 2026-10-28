@@ -1,3 +1,5 @@
+import pytest
+
 from app.etl import dose, identity
 
 # 断言值全部来自 `scripts/dose_convert.py` 的直接调用实测（2026-10-28）。
@@ -88,3 +90,57 @@ def test_split_parent_finds_modification():
     assert identity.split_parent("桂枝汤加厚朴和杏仁") == "桂枝汤"
     assert identity.split_parent("小柴胡汤去半夏加人参") == "小柴胡汤"
     assert identity.split_parent("桂枝汤") is None
+
+
+# ---- 合方拆分（D9–D11）。以下 13 串逐字取自 distilled/方剂库-经典配方.md ----
+
+PAIR_CASES = [
+    ("炙甘草汤和小建中汤", ["炙甘草汤", "小建中汤"]),
+    ("胶艾汤和当归黄芪建中汤", ["胶艾汤", "当归黄芪建中汤"]),
+    ("茯苓桂枝甘草大枣汤和枳实芍药桔梗散", ["茯苓桂枝甘草大枣汤", "枳实芍药桔梗散"]),
+    ("四逆散和枳实芍药桔梗散", ["四逆散", "枳实芍药桔梗散"]),
+    ("理中汤和枳实薤白桂枝汤", ["理中汤", "枳实薤白桂枝汤"]),
+    ("瓜蒌薤白白酒汤和瓜蒌薤白半夏汤", ["瓜蒌薤白白酒汤", "瓜蒌薤白半夏汤"]),
+    ("大青龙汤和小青龙汤", ["大青龙汤", "小青龙汤"]),
+    ("四物汤和桂枝茯苓丸", ["四物汤", "桂枝茯苓丸"]),
+    ("百合地黄汤和百合鸡子汤", ["百合地黄汤", "百合鸡子汤"]),   # 「百合」的合不得当连接词
+    ("瓜蒌桂枝汤和葛根汤", ["瓜蒌桂枝汤", "葛根汤"]),
+    ("分消汤和<济生方>--补气健中汤", ["分消汤", "补气健中汤"]),   # 连接词后接出处标记
+    ("当归赤豆散和薏苡附子败酱散", ["当归赤豆散", "薏苡附子败酱散"]),
+    ("半夏甘草汤和人参半夏干姜汤", ["半夏甘草汤", "人参半夏干姜汤"]),
+]
+
+# 内含 加/合/各半 的独立经方（spine 实测 32 个，此处取代表）：拆之即毁方
+PROTECTED = [
+    "白虎加人参汤", "桂枝加厚朴杏仁汤", "四逆加人参汤", "桂枝麻黄各半汤", "桂枝二麻黄一汤",
+    "当归四逆加吴茱萸生姜汤", "木防己去石膏加茯苓芒硝汤", "百合知母汤", "小青龙加石膏汤",
+    "桂枝甘草汤",
+]
+
+
+@pytest.mark.parametrize("text,expected", PAIR_CASES)
+def test_split_pair_components(text, expected):
+    assert identity.split_pair_components(text) == expected
+
+
+@pytest.mark.parametrize("name", PROTECTED)
+def test_independent_jingfang_are_never_split(name):
+    assert identity.split_pair_components(name) is None
+
+
+def test_split_pair_rejects_disease_description():
+    # 方#87「治疗产后腰背疼和去除妊娠纹」是病证描述里的「和」，单用小柴胡汤，不是合方
+    assert identity.split_pair_components("小柴胡汤") is None
+    assert identity.split_pair_components("治疗产后腰背疼和去除妊娠纹") is None
+
+
+def test_split_pair_uses_spine_veto():
+    """整名命中 spine 者一律 single——第三层门禁，防止语料某天把合方收成正方后仍被劈。"""
+    assert identity.split_pair_components(
+        "四逆散和枳实芍药桔梗散", spine={"四逆散和枳实芍药桔梗散"}) is None
+
+
+def test_split_pair_supports_only_two_components():
+    # 三方组合罕见且更易误判 → 交人工
+    assert identity.split_pair_components("甲汤和乙汤和丙散") is None
+

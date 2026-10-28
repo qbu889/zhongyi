@@ -37,7 +37,20 @@ class Formula(Base):
     canonical_name: Mapped[str] = mapped_column(Text, unique=True)
     anchor: Mapped[str] = mapped_column(Text)             # override | jingfang_zucheng | candidate
     status: Mapped[str] = mapped_column(Text, default="candidate")   # confirmed | candidate | split_parent
+    # D9：pair = 两方合用（炙甘草汤和小建中汤），modified = 加减方（桂枝加葛根汤）
+    kind: Mapped[str] = mapped_column(Text, default="single")        # single | modified | pair
     note: Mapped[str | None] = mapped_column(Text)
+
+
+class FormulaComponent(Base):
+    """合方的成分边（D9）。一个 pair 恰有两个成分；成分自身可以是 candidate。"""
+
+    __tablename__ = "formula_component"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pair_formula_id: Mapped[int] = mapped_column(ForeignKey("formula.id"), index=True)
+    component_formula_id: Mapped[int] = mapped_column(ForeignKey("formula.id"), index=True)
+    ordinal: Mapped[int] = mapped_column(Integer, default=1)
 
 
 class FormulaAlias(Base):
