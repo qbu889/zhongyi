@@ -321,7 +321,8 @@ git commit -m "chore(m1): scaffold FastAPI backend, pgvector compose, importlib 
 **Interfaces:**
 - Produces（SQLAlchemy 2.x `DeclarativeBase`，类名 → 表名）：
   - `Base`
-  - `Formula` → `formula`：`id, canonical_name(unique), anchor ∈ {'override','jingfang_zucheng','candidate'}, status ∈ {'confirmed','candidate','split_parent'}, note`
+  - `Formula` → `formula`：`id, canonical_name(unique), anchor ∈ {'override','jingfang_zucheng','candidate'}, status ∈ {'confirmed','candidate','split_parent'}, kind ∈ {'single','modified','pair'}, note`（D9）
+  - `FormulaComponent` → `formula_component`：`id, pair_formula_id(FK), component_formula_id(FK), ordinal`；合方的两个成分边（D9），重复药味不得合并（D10）
   - `FormulaAlias` → `formula_alias`：`id, formula_id(FK), name, doc, kind ∈ {'古名','现代名','汤方尾巴','加减写法','一行多方拆分'}`；`(name, doc)` 唯一
   - `FormulaDoseVariant` → `formula_dose_variant`：`id, formula_id(FK), source_doc ∈ {'经方组成','经典配方','override'}, dose_basis ∈ {'ancient','gram'}, ordinal, source_row_no, raw_composition(Text), parse_confidence(Float|None), extract_rule_version`
   - `FormulaItem` → `formula_item`：`id, variant_id(FK), herb_id(FK nullable), herb_text, dose_text, dose_g(Float|None), dose_state ∈ {'exact','approx','count_only','absent','unknown_unit'}, preparation, conversion_note`
@@ -1000,6 +1001,10 @@ git commit -m "feat(m1): 经方组成 parser + dose 换算复用 dose_convert"
     讲稿噪声名（实测金匮有「这都是真武汤」「一样的汤」「主力是桂枝汤」等）须经**方名白名单**过滤，
     白名单来源 = `override 45 方 ∪ 经方组成 242 方 ∪ 已确认候选`；白名单外 → 候选队列。
 - 覆盖说明：本期 `formula_variant_pair` 预期仅命中约 **32%**（77/242），其余方留空即「未交叉校验」，**不得为凑覆盖率放宽身份判定**。
+- **合方（D9–D11）**：`identity.split_pair_components(tail)` 三层门禁（尾段定位 + 连接词前须剂型字 + spine 整名否决）；
+  命中则 `kind=pair` + 两条 `formula_component`；组成非空才建 variant 且重复药味按原文保留；
+  成分未命中 spine → `status=candidate` + `pending_formula_name`（附药味集重合的 suggested_parent，不自动合并）；
+  实测目标：13 行拆对、27 行病证假阳性不动、32 个 spine 独立经方不被劈。
 
 
 - [ ] **Step 1: 写失败测试**
