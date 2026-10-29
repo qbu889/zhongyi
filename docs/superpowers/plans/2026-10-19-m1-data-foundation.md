@@ -1320,7 +1320,43 @@ git commit -m "feat(m1): 十二经穴位库 + 治症取穴 parser"
 
 ---
 
-## Task 11–16：M1 后半段（**待细化**，2026-10-28 登记）
+## Task 11: 变体配对物化（`formula_variant_pair`，D8）
+
+**Files:** `backend/app/etl/verify.py`、`backend/tests/unit/test_verify_pairs.py`
+
+**形态**：纯函数，产出记录对象，不碰 ORM（持久化在 Task 12）。
+**口径复用**：归一 `LOADER.verify.normalize`、古制转克 `ancient_to_g`、版本优选 `best_match`，
+backend 只做编排，**不重写算法**（PRD 全局约束：校验口径唯一来源是脚本）。
+
+```
+build_variant_pairs(ancient: list[AncientFormula], classic: list[ClassicVariant]) -> PairingResult
+VariantPairRecord(formula_name, variant_a_ordinal, variant_b_ordinal, source_row_no,
+                  pairing_method='algorithmic', herb_diff{missing_in_gram[], missing_in_ancient[]},
+                  dose_dev{name:{ancient_g, gram_g, deviation_pct}}, score, algorithm_version)
+PairingResult(pairs, only_ancient: list[str], only_gram: list[str])
+```
+
+**四条硬规则（都有实测理由）**：
+1. **`kind=pair` 的方不参与对照**（D9）：合方与其成分方不是"同一方的两个版本"，
+   配上就会把两方的剂量差报成黄牌。
+2. **优选版本必须是确定性的**：`best_match` 用 `>` 比较，平分时取先出现的版本 → 版本顺序由
+   语料行序决定，故 `parse_classic` 必须保序；测试要断言同输入两次结果一致（可复现，NFR-4/6）。
+3. **剂量阈值 >50% 用脚本 `ancient_to_g`**，非 exact 的药味（`dose_g is None`）**跳过不报偏差**
+   —— 语料实测 31% 的剂量点转不成克，硬比会造出假偏差。
+4. `herb_diff` 两侧都用脚本 `normalize` 后的集合比较（炙甘草=甘草），`missing_in_*` 为**归一名**。
+
+**实测规模（Task 11 执行时复核）**：`parse_classic` 归名后与 spine 交集 81，
+其中多版本方（同名 >1 行）需优选；其余 161 方只有古制版 → `only_ancient`，显示蓝牌「未交叉校验」。
+
+- [x] **Step 1**: 写失败测试（pair 排除、确定性、非 exact 跳过、归一集合比较、幽灵名不入）
+- [x] **Step 2**: 跑红
+- [x] **Step 3**: 实现 `verify.py`
+- [x] **Step 4**: 真实语料回归：pairs 数、only_ancient 数、药材差异数、剂量偏差项数，全部按实测锁定
+- [x] **Step 5**: 提交
+
+---
+
+## Task 12–16：M1 后半段（**待细化**，2026-10-28 登记）
 
 原计划到 Task 7 就断了，而 File Structure 声明的 8 个模块一个任务都没有。
 以下按「先修 Task 1-7、后半段边做边补」的决策登记为待办；**每个任务开工前必须先补齐 5 步式分解**，
