@@ -1,4 +1,4 @@
-from app.etl import parse_classics
+from app.etl import parse_classics, parse_formulas
 
 # ---- 经典配方（剂量源 · gram）：行逐字取自 distilled/方剂库-经典配方.md ----
 CLASSIC = """
@@ -53,9 +53,26 @@ def test_parse_classic_real_corpus_counts():
     text = (settings.distilled_dir / "方剂库-经典配方.md").read_text(encoding="utf-8")
     recs = parse_classics.parse_classic(text)
     assert len(recs) == 250, "经典配方实测 250 数据行，一行都不许静默丢弃"
-    assert sum(1 for r in recs if r.kind == "pair") == 13, "合方实测 13 行（附录 C-8）"
-    assert sum(1 for r in recs if not r.names) >= 60, "抽不出方名者须进队列（实测 63 行）"
+    # 14 而非 13：方#41 用「厚朴麻黄汤方+泽漆汤方」的 + 写法，早期只认「和」会漏
+    assert sum(1 for r in recs if r.kind == "pair") == 14
+    # 57 而非 63：尾段是 `—` 时退到 `出自<书>--方名` 取，救回 方#66 真武汤 等 6 个真方名
+    assert sum(1 for r in recs if not r.names) == 57
+    assert sum(1 for r in recs if r.pending_reason == "multi_name_row") == 3
     assert not any("—" in n or "---" in n for r in recs for n in r.names), "幽灵方名不得出现"
+
+
+def test_backend_names_superset_of_script():
+    """后端与 spine 的交集 81 > 脚本口径 77：多出的来自 方#28 一行四方的正确拆分
+    （当归散/白术散 等），不是放开门禁。两个数字都要保留，因为它们量的是不同的事。"""
+    from app.config import settings
+    anc = parse_formulas.parse_ancient(
+        (settings.distilled_dir / "方剂库-经方组成.md").read_text(encoding="utf-8"))
+    cls = parse_classics.parse_classic(
+        (settings.distilled_dir / "方剂库-经典配方.md").read_text(encoding="utf-8"))
+    inter = {r.name for r in anc} & {n for r in cls for n in r.names}
+    assert len(inter) == 81
+    assert {"当归散", "白术散"} <= inter
+
 
 
 # ---- 方证出处（伤寒六经方库 / 金匮方剂库）----

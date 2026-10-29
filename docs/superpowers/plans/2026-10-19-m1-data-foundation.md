@@ -992,7 +992,7 @@ git commit -m "feat(m1): 经方组成 parser + dose 换算复用 dose_convert"
   - `parse_classics.ClassicVariant`（`no:int|None, names: list[NameCandidate], herbs: list[(归一化药名, 克数|None, 原文)], remark`）
   - `parse_classics.parse_classic(text) -> list[ClassicVariant]`（`| # | 病证/方名 | 组成 | 备注 |`）——
     方名**必须走 `identity.extract_formula_name`**，不再用 `·` 后段兜底；
-    一行多方（方#28）→ 多个候选；抽不出名（实测 63 行，脚本修正后）→ 产 `PendingFormulaName` 而非静默丢弃；
+    一行多方（方#28）→ 多个候选；抽不出名（脚本 63 行 / 后端加头段兜底后 57 行）→ 产 `PendingFormulaName` 而非静默丢弃；
     组成按逗号切 `药名 N克`，**抽不出药味者不得丢弃整行**（方#28 组成为「孕期 1,」这类非药味文本，
     旧 `parse_gram` 会因 `if herbs:` 直接丢行）→ 保留行 + `parse_confidence` 降级。
   - `parse_classics.parse_evidence(text, doc) -> list[EvidenceRow]`（`伤寒六经方库.md`/`金匮方剂库.md`）——
@@ -1004,7 +1004,7 @@ git commit -m "feat(m1): 经方组成 parser + dose 换算复用 dose_convert"
 - **合方（D9–D11）**：`identity.split_pair_components(tail)` 三层门禁（尾段定位 + 连接词前须剂型字 + spine 整名否决）；
   命中则 `kind=pair` + 两条 `formula_component`；组成非空才建 variant 且重复药味按原文保留；
   成分未命中 spine → `status=candidate` + `pending_formula_name`（附药味集重合的 suggested_parent，不自动合并）；
-  实测目标：13 行拆对、27 行病证假阳性不动、32 个 spine 独立经方不被劈。
+  实测目标：**14 行拆对**（含 方#41 的 `+` 写法）、27 行病证假阳性不动、32 个 spine 独立经方不被劈。
 
 
 - [x] **Step 1: 写失败测试**
@@ -1331,7 +1331,7 @@ git commit -m "feat(m1): 十二经穴位库 + 治症取穴 parser"
 | 8 | 医案 ETL `parse_cases.py` | `06-医案/临床问答对.md` 叙述体 → `case` 30 条；主方与**随证加味**分列（「射干麻黄汤＋桔梗」）；`treatment_formula_ids` 走 `identity` 解析 | `case` 计数 = 30（`问NN` 唯一编号实测 30）；加味不入主方 `formula_item` |
 | 9 | 框架 ETL `parse_framework.py` | `01/02/04/06` 的框架类文档 → `framework_chunk`；小节边界即切片边界 | 实测数据行：核心理论 10 / 六经框架 17 / 临证补充 25；七条基准可被 FR-5 问诊卡消费 |
 | 10 | 药材归一与 `herb_id` 关联 | 古名↔现代名（实测 `牡桂`=桂枝、`茈胡`=柴胡、`杏仁` 在库内无此行）+ 炮制前缀；**复用改造后的 `formula_verify.normalize`** | FR-13 ⑤ 悬空数清零；提问「柴胡」「茈胡」命中同一 `herb` |
-| 11 | `verify.py` + `formula_variant_pair` 落库（D8） | 调 `formula_verify.verify`，配对结果物化，写 `algorithm_version`；黄牌/灰勾/蓝牌三态数据齐备 | 配对数 = 77（脚本修正后实测）；`乌梅丸`↔`乌梅丸方` 分裂对已归一；无 `—`/`---` 幽灵方 |
+| 11 | `verify.py` + `formula_variant_pair` 落库（D8） | 调 `formula_verify.verify`，配对结果物化，写 `algorithm_version`；黄牌/灰勾/蓝牌三态数据齐备 | 配对数 = 77（脚本口径）/ 81（后端一行多方正确拆分后）；`乌梅丸`↔`乌梅丸方` 分裂对已归一；无 `—`/`---` 幽灵方 |
 | 12 | `loaders.py` 幂等 upsert | 解析记录 → ORM；按 `(canonical_name)` / `(variant, herb_text)` 等自然键 upsert，重复 reindex 不产生重复行 | 连跑两次 reindex，各表计数不变 |
 | 13 | `embed/`：切片 + Embedder | `chunk.py`（表格行/医案条/框架小节）+ `embedder.py`（`HashingEmbedder` 单测用、`BgeM3Embedder` 仅 integration）+ `indexer.py` | 单测**不下载模型**；`chunk_vector.embedding` 维度 1024；`chunking_version` 落 `index_version` |
 | 14 | `admin/reindex.py` + `git_utils.py` | 全流程编排：corpus → parse → identity → verify → load → embed；绑 `distilled/` git hash；**蓝绿切换**（重建期间旧索引可用，PRD 6.6） | `GET /healthz` 与 `POST /api/admin/reindex` 通；`index_version` 至少两行且旧行仍被查询命中 |

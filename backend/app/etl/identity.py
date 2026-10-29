@@ -14,6 +14,8 @@ from app.etl.scripts_loader import LOADER
 DOSAGE_FORMS = "汤丸散饮膏丹酒"
 _SEPARATORS = re.compile(r"[,，、;；]")
 _SOURCE_PREFIX = re.compile(r"^出自\s*[<《]?.*?[>》]?\s*[-–—]*")
+# 非锚定版：用于在「病证描述 — 出自<书>--方名」里定位方名起点
+_SOURCE_TAIL = re.compile(r"出自\s*[<《][^>》]*[>》]\s*[-–—]*")
 _MODIFICATION = re.compile(r"^(.{2,12}?[%s])(?:加|去|减)" % DOSAGE_FORMS)
 
 
@@ -58,26 +60,10 @@ def _one(raw: str, kind: str) -> NameCandidate | None:
     return NameCandidate(name=name, confidence=_confidence(name), kind=kind, raw=raw)
 
 
-def extract_formula_name(field: str) -> list[NameCandidate]:
-    """从 `病证/方名` 混排字段抽出方名候选；抽不出则返回空列表（进候选队列）。
-
-    语料格式为 `病证描述 — 出自<书>--方名 · 方名`，末段是权威方名，
-    故优先取最后一个 `·` 之后的内容；一行可连写多首（实测 方#28 写了四首）。
-    """
-    text = norm(field or "").strip()
-    if is_ghost(text):
-        return []
-
-    tail = text.rsplit("·", 1)[1].strip() if "·" in text else text
-    kind = "tail_segment" if "·" in text else "exact_column"
-    tail = _SOURCE_PREFIX.sub("", tail).strip()
-    if is_ghost(tail):
-        return []
-
-    parts = [p.strip() for p in _SEPARATORS.split(tail) if p.strip()]
+def _candidates_from(text: str, kind: str) -> list[NameCandidate]:
+    parts = [p.strip() for p in _SEPARATORS.split(text) if p.strip()]
     if len(parts) > 1:
         kind = "split_from_multi"
-
     out: list[NameCandidate] = []
     seen: set[str] = set()
     for part in parts:
@@ -86,6 +72,41 @@ def extract_formula_name(field: str) -> list[NameCandidate]:
             seen.add(candidate.name)
             out.append(candidate)
     return out
+
+
+def extract_formula_name(field: str) -> list[NameCandidate]:
+    """从 `病证/方名` 混排字段抽出方名候选；抽不出则返回空列表（进候选队列）。
+
+    语料格式为 `病证描述 — 出自<书>--方名 · 方名`。取名顺序是**位置优先级**，不是造名：
+    1. 最后一个 `·` 之后的尾段（最权威）；
+    2. 尾段是 `—` 之类占位符时，退到 `出自<书>--` 之后的余段——实测 方#66
+       「身体肥胖平日头晕眼花 — 出自<伤寒杂病论>-真武汤方 · —」的方名只写在第 2 处，
+       早期实现只看尾段，导致 6 个真方名被误判为「抽不出」。
+    两处都没有才返回空列表。一行可连写多首（实测 方#28 写了四首）。
+    """
+    text = norm(field or "").strip()
+    if is_ghost(text):
+        return []
+
+    if "·" in text:
+        head, tail = text.rsplit("·", 1)
+        tail = _SOURCE_PREFIX.sub("", tail.strip()).strip()
+        if not is_ghost(tail):
+            return _candidates_from(tail, "tail_segment")
+        # 尾段是占位符：退到出自标记之后
+        m = _SOURCE_TAIL.search(head)
+        remainder = head[m.end():].strip() if m else ""
+        return _candidates_from(remainder, "source_trailing") if remainder else []
+
+    if "·" not in text:
+        m = _SOURCE_TAIL.search(text)
+        if m:
+            remainder = text[m.end():].strip()
+            if not is_ghost(remainder):
+                return _candidates_from(remainder, "source_trailing")
+        return _candidates_from(text, "exact_column")
+    return []
+
 
 
 def split_parent(name: str) -> str | None:
@@ -103,8 +124,10 @@ def split_parent(name: str) -> str | None:
 #   1. 只在 `·` 尾段调用本函数（调用方负责），保护 27 行病证描述里的「和」；
 #   2. 连接词前一位必须是剂型字，保护 `百合地黄汤` 的「合」不被当连接词；
 #   3. 整名命中 spine 者否决，保护 32 个内含 加/合/各半 的独立经方。
+# 连接词集合含 `+`：实测 方#41 写作「厚朴麻黄汤方+泽漆汤方」；
+# 前视允许 `方`（汤方/丸方 是语料常见的方名后缀写法）。
 _PAIR_CONNECTOR = re.compile(
-    r"(?<=[%s])(?:和|与|并|合)(?=\s*(?:[<《][^>》]*[>》]\s*[-–—*]*)?[一-鿿])" % DOSAGE_FORMS
+    r"(?<=[%s方])(?:和|与|并|合|[+＋])(?=\s*(?:[<《][^>》]*[>》]\s*[-–—*]*)?[一-鿿])" % DOSAGE_FORMS
 )
 _SOURCE_MARKER = re.compile(r"^\s*[<《][^>》]*[>》]\s*[-–—*]*")
 

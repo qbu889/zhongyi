@@ -108,6 +108,8 @@ PAIR_CASES = [
     ("分消汤和<济生方>--补气健中汤", ["分消汤", "补气健中汤"]),   # 连接词后接出处标记
     ("当归赤豆散和薏苡附子败酱散", ["当归赤豆散", "薏苡附子败酱散"]),
     ("半夏甘草汤和人参半夏干姜汤", ["半夏甘草汤", "人参半夏干姜汤"]),
+    # 方#41 实测用 `+` 表合用：早期只认「和」会整行漏判
+    ("厚朴麻黄汤方+泽漆汤方", ["厚朴麻黄汤", "泽漆汤"]),
 ]
 
 # 内含 加/合/各半 的独立经方（spine 实测 32 个，此处取代表）：拆之即毁方
@@ -116,6 +118,20 @@ PROTECTED = [
     "当归四逆加吴茱萸生姜汤", "木防己去石膏加茯苓芒硝汤", "百合知母汤", "小青龙加石膏汤",
     "桂枝甘草汤",
 ]
+
+
+def test_extract_falls_back_to_source_trailing_segment():
+    """方#66 实测：尾段是占位符 `—`，真方名写在 `出自<书>--` 之后。
+    早期实现只看尾段，把这类行误判成「抽不出方名」。"""
+    got = identity.extract_formula_name(
+        "身体肥胖平日头晕眼花 — 出自<伤寒杂病论>-真武汤方 · —")
+    assert [c.name for c in got] == ["真武汤"]
+    assert got[0].kind == "source_trailing"
+
+
+def test_extract_head_fallback_still_refuses_invention():
+    # 头段也没有 `出自` 标记时，仍不得把病证描述当方名
+    assert identity.extract_formula_name("治疗急性乳腺炎的处方 · —") == []
 
 
 @pytest.mark.parametrize("text,expected", PAIR_CASES)
