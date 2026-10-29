@@ -8,9 +8,11 @@ from app.etl import scripts_loader  # noqa: F401  导入即完成 scripts/ 复�
 def create_app() -> FastAPI:
     app = FastAPI(title="中医经方 RAG · M1")
 
+    from app.api import formulas as formulas_api
     from app.api import search as search_api
 
     app.include_router(search_api.router)
+    app.include_router(formulas_api.router)
 
     @app.get("/healthz")
     def healthz():

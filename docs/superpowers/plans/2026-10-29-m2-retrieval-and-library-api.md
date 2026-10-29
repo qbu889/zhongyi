@@ -178,13 +178,18 @@
   - `cases[]`：引用本方的医案号
 - **禁止**把 `加减写法` 别名当作本方别名展示；谱系必须走 `lineage`。
 
-- [ ] **Step 1: 写失败测试**（桂枝汤 detail：有 variant_pair、children 含桂枝加葛根汤；
+- [x] **Step 1: 写失败测试**（桂枝汤 detail：有 variant_pair、children 含桂枝加葛根汤；
       桂枝加葛根汤 detail：parent=桂枝汤 且自身无 pair；合方 detail 有 components；
       `herb=桂枝` 反查含桂枝汤；`six_jing=太阳` 过滤）
-- [ ] **Step 2: 实现列表 + 详情，分页**
-- [ ] **Step 3: 核对真实数值（pair 77、component 28 的落点）**
+- [x] **Step 2: 实现列表 + 详情，分页**
+- [x] **Step 3: 核对真实数值（pair 77、component 28 的落点）**
 
-**验收**：D6 在 API 层可见——桂枝加葛根汤不出现在桂枝汤的 `variants` 里，只出现在 `lineage.children`。
+**验收（已完成，2026-10-29）**：9 个用例全绿。实测：`formula` 423；桂枝汤 = 1 ancient +
+4 gram variant、4 条 evidence（太阳/阳明/太阴/厥阴病）、1 条物化配对；桂枝加葛根汤
+`lineage.parent=桂枝汤`、自身无 variant（只有伤寒出处）；14 个合方中仅 5 个的两个成分都有组成，
+其余成分 `items=[]` 并**不摊派**合方整行药味（理中汤即为一例，已加测试留痕）。
+
+**D6 在 API 层可见**：桂枝加葛根汤不出现在桂枝汤的 `variants` 里，只出现在 `lineage.children`。
 
 ---
 
