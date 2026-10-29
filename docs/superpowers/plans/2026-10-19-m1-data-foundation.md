@@ -1283,7 +1283,44 @@ git commit -m "feat(m1): 十二经穴位库 + 治症取穴 parser"
 
 ---
 
-## Task 10–16：M1 后半段（**待细化**，2026-10-28 登记）
+## Task 10: 药材词表与 `formula_item.herb_id` 关联
+
+**Files:** `backend/app/etl/herb_vocab.py`、`backend/tests/unit/test_herb_vocab.py`；
+`scripts/formula_verify.py` 的炮制前缀表补 `生`（授权范围内，附测试）。
+
+**开工前实测（2026-10-29）**：两个剂量源共 **2663 处药味引用，617 处（23%）未命中词表**，且性质分三类，
+必须三态而非二态：
+
+| 状态 | 例（出现次数） | 处理 |
+|---|---|---|
+| `resolved` | 古名/别名/去炮制命中 | 写 `herb_id` |
+| `unresolved_herb` | 生姜(129)、黄芪(14)、党参(13)、薏仁(7)、金银花(3)、川穹(10)、黄岑(9) | **保留 `herb_text`、`herb_id=NULL`**，进 FR-13 ⑤；后世药名与疑似错字都不得自动并 |
+| `noise` | 每次(8)、每日(4)、水煮成(6)、合浸泡、火熬煮、取乌头、片大枣 | 进 FR-13 ④，**不得成为 `formula_item` 行** |
+
+**三条约束（决定实现形态）**：
+1. **噪声判据必须对 379 个本经药名零冲突**——「煮/煎/熬/泡/每/成/取」这类语素作噪声标记前，
+   先断言它们不出现在任何真实药名里（`水蛭/水银/水萍` 证明「水」不能当标记，故只做显式语素表 + 测试锁）。
+2. **别名层不可全信**：实测「现代名→古名」对照表 **3/10 悬空**（葳蕤/瓜蒌根/瓜蒌实 不是条目名），
+   且 `芎䓖` 的 `䓖`(U+4516) 落在 `[一-鿿]` 之外导致正则整条漏抓（故对照表实得 10 条而非 11 条）。
+   → 词表只收**验证过存在于条目名**的别名，悬空者进报告。
+3. **炮制前缀加 `生` 是安全的**：本经有 `干姜` 而**无** `生姜`/`姜`，故 `生姜→姜` 仍落 unresolved_herb，
+   不会错并；`生附子→附子`、`生半夏→半夏` 正确归位（生/炮之别由 `formula_item.preparation` 承载）。
+
+**Interfaces:**
+- `herb_vocab.build(herbs) -> HerbVocab`（`.resolve(text) -> Resolution(text, canonical, matched_via, status, suggestion)`）
+- `matched_via ∈ {exact, alias, prepared_stripped, synonym, none}`；`status ∈ {resolved, unresolved_herb, noise}`
+- `HerbVocab.stats(records) -> Counter`：供 loaders 与 FR-13 ⑤ 出报告
+- 不做：错字自动纠正、模糊匹配、跨源合并（D6/D11）
+
+- [x] **Step 1**: 写失败测试（三态 + 379 名零冲突 safety + 悬空别名进报告）
+- [x] **Step 2**: 跑红
+- [x] **Step 3**: 扩展 `scripts/formula_verify.normalize` 前缀表并补脚本测试；实现 `herb_vocab.py`
+- [x] **Step 4**: 真实语料回归：2663 引用、resolved 数与 617 未命中的三态拆分与上表吻合
+- [x] **Step 5**: 提交
+
+---
+
+## Task 11–16：M1 后半段（**待细化**，2026-10-28 登记）
 
 原计划到 Task 7 就断了，而 File Structure 声明的 8 个模块一个任务都没有。
 以下按「先修 Task 1-7、后半段边做边补」的决策登记为待办；**每个任务开工前必须先补齐 5 步式分解**，

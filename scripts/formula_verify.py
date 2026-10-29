@@ -52,9 +52,18 @@ def ancient_to_g(dose):
             return round(n * factor, 1)
     return None
 
+# 炮制前后缀剥离表（2026-10-29 补 `生` 与后缀形）：身份归一到本经条目名，
+# 生/炮之别由 formula_item.preparation 承载。
+# 只收**已验证不与任何本经药名冲突**的语素：`大` 不能进（会毁掉「大枣」），
+# `水`/`火` 不能进（水蛭/水萍/凝水石/萤火 是真药名）。
+PREP_PREFIX = r'^(炮|炙|炒|洗|去皮|劈|擘|去足|去节|研|生)'
+PREP_SUFFIX = r'(炙|炒|制|去皮)$'
+
+
 def normalize(name):
-    name = re.sub(r'^(炮|炙|炒|洗|去皮|劈|擘|去足|去节|研)', '', name.strip())
+    name = re.sub(PREP_PREFIX, '', name.strip())
     name = re.sub(r'[（(].*?[）)]', '', name).strip()
+    name = re.sub(PREP_SUFFIX, '', name).strip()
     return SYNONYM.get(name, name)
 
 # ---- 方名归一（2026-10-28 修正，见 PRD §5.6 D7 / 附录 C）------------------
