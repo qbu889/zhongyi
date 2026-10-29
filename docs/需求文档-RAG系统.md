@@ -312,7 +312,7 @@ formula_variant_pair(formula_id, variant_a, variant_b, pairing_method /*declared
 
 **Task 12 整库入库基线**（真实语料，跑两遍行数不变）：`herb` 379 / `formula` 423 / `formula_item` 2197 / `formula_evidence` 610 / `formula_variant_pair` **77**（verify 产 81 对，4 对因克数版该行无可解析药味而跳过——已计入 `LoadSummary.skipped`，不静默）/ `formula_component` 28（14 合方×2）/ `pending_formula_name` 57 / `case` 30 / `acupoint` 352 / `acupoint_symptom` 54 / `framework_chunk` 29；噪声剔除 30 项、`herb_id` 悬空 432 行。
 
-**Task 13 切片基线**（真实语料，fake embedder）：**1824** 条切片 = herb 379 + formula 423 + evidence 610 + case 30 + framework 30（长小节分块后比 29 个源块多 1）+ acupoint 352；重跑行数不变，切片键无重复，`embedding` 维度 1024。
+**Task 13/14 基线**（真实语料，fake embedder；整库 reindex **≈1.6s**）：**1824** 条切片 = herb 379 + formula 423 + evidence 610 + case 30 + framework 30（长小节分块后比 29 个源块多 1）+ acupoint 352；重跑行数不变，切片键无重复，`embedding` 维度 1024。
 
 **Task 11 实测的配对质量**（`formula_variant_pair`，噪声过滤后）：
 配对 **81** 方 → 灰勾（药材集合完全一致）**34**、黄牌（有药材差异）**47**；
@@ -422,7 +422,7 @@ formula_variant_pair(formula_id, variant_a, variant_b, pairing_method /*declared
 
 ### 6.5 管理端交互
 
-- **重建索引**：按钮 → 二次确认（显示当前索引 commit hash → 目标 hash 的 `distilled/` diff 摘要：+N 方 / -N 药…）→ 进入进度页（阶段流水：ETL→切片→embedding→入库→校验，各阶段耗时与失败计数；完成后展示增量 diff 报告）。重建期间旧索引保持可用（蓝绿切换），页顶横幅提示"当前正在使用索引 vX（重建中）"。
+- **重建索引**：按钮 → 二次确认（显示当前索引 commit hash → 目标 hash 的 `distilled/` diff 摘要：+N 方 / -N 药…）→ 进入进度页（一期实测整库重建 1.6s，fake embedder；真实 BGE-M3 的耗时待 M5 集成测）（阶段流水：ETL→切片→embedding→入库→校验，各阶段耗时与失败计数；完成后展示增量 diff 报告）。重建期间旧索引保持可用（蓝绿切换），页顶横幅提示"当前正在使用索引 vX（重建中）"。
 - **质量报告**：FR-13 的七张清单各一表（药材差异 / 剂量偏差>50% / 解析失败行 / 注记误抽药味 / `herb_id` 悬空 / 换算状态分布 / **待确认方名候选队列**），支持筛选+导出 CSV；"解析失败行"点击可跳到对应 distilled 源文件路径，指引维护者修数据。
 - **候选方名审核**（D7 的配套界面）：⑦ 队列逐行给出「源行原文 + 抽取到的候选名 + 建议母方 + 置信度」，维护者三个动作——确认为独立方 / 归并到既有方（写 `formula_alias`）/ 判为噪声（永不入库）。**归并动作必须留痕**（谁、何时、依据），否则一期积累的 54 行幽灵名会在下一轮重建里复活。
 - **问答日志**：表格列=query/意图/命中数/是否拒答/👎标记；顶部四个小卡片看板（日活 query 数、拒答率、平均证据命中数、分类分布），拒答列表按频次排序——高频拒答词即语料补缺清单（反哺 `distilled/`）。

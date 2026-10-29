@@ -1432,7 +1432,32 @@ PairingResult(pairs, only_ancient: list[str], only_gram: list[str])
 
 ---
 
-## Task 14–16：M1 后半段（**待细化**，2026-10-28 登记）
+## Task 14: reindex 编排与索引版本
+
+**Files:** `backend/app/admin/reindex.py`、`backend/app/admin/__init__.py`、`backend/tests/db/test_reindex.py`
+
+**蓝绿的真实形态（重要取舍）**：PRD 6.6 说「重建期间旧索引保持可用」，而 Task 12 的入库是
+**原地 upsert**——原地改数据本身不构成蓝绿。一期采用**单事务原子发布**：
+整条流水线（parse → load → embed → 写 `index_version`）跑在同一个事务里，最后一步把新版本置
+`ready`、旧版本置 `retired` 后一起提交。Postgres 的 MVCC 保证并发读事务要么看到旧完整态、
+要么看到新完整态，不会读到半截索引。
+
+代价与退路：整库入库 + 1824 条向量在一个事务里，事务较长；若未来 reindex 时长或并发读压力上升，
+退路是给 `chunk_vector`/`formula_*` 加 `index_version_id` 分区键、发布时翻转指针（双写期更长但事务小）。
+**这条退路不在一期实现**，只在文档留痕，避免出现「声称蓝绿、实际原地改」的口径漂移。
+
+**版本恒等式**：`index_version` 由四个版本共同决定——语料 git hash、embedding 模型、切片规则、
+抽取规则（NFR-6）。四者任一变化都必须产出新版本；全同且已有 `ready` 行时 reindex 为空操作。
+
+- [x] **Step 1**: 写失败测试（四元组恒等、重复 reindex 空操作、只有一个 ready、失败整体回滚）
+- [x] **Step 2**: 跑红
+- [x] **Step 3**: 实现 `reindex.py`（含 `CREATE EXTENSION IF NOT EXISTS vector` 的库初始化）
+- [x] **Step 4**: 真实语料跑通：ready 版本行、计数与 Task 12/13 基线吻合
+- [x] **Step 5**: 提交
+
+---
+
+## Task 15–16：M1 后半段（**待细化**，2026-10-28 登记）
 
 原计划到 Task 7 就断了，而 File Structure 声明的 8 个模块一个任务都没有。
 以下按「先修 Task 1-7、后半段边做边补」的决策登记为待办；**每个任务开工前必须先补齐 5 步式分解**，
