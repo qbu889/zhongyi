@@ -31,7 +31,9 @@
   验收：`CREATE EXTENSION vector` 成功、`vector(4)` 列 + `USING hnsw (emb vector_cosine_ops)` + `<=>` 查询实测通过。
 
 - 语料 `distilled/` **只读**，ETL 不得写回 `distilled/`；索引版本绑定其 git commit hash（NFR-6）。
-  ⚠️ M0 前置仍未做：`distilled/汉唐方剂索引.md`、`distilled/02-伤寒论/临证诊断与治则补充.md` 权限为 `0600`。
+  M0 前置已收口（2026-10-29）：`distilled/汉唐方剂索引.md`、`distilled/02-伤寒论/临证诊断与治则补充.md`
+  由 `0600` 改为 `0644`。注意 **git 只记录可执行位（100644/100755），无权表示 rw 位**，
+  故 `git ls-files -s` 一直是 100644、本次改动不可提交，只能在检出环境用 `ls -l` 核对。
 - **ETL 收录清单以 PRD 附录 A 为准**（13 份收录 / 4 份排除，含逐文件行数与字符实测）：编号子目录 `01`~`06` 下源文档
   + 顶层 `方剂库-经典配方.md` / `方剂库-经方组成.md` / `汉唐方剂索引.md`；**排除**任意路径 `README.md`、
   `03-金匮/方剂交叉校验.md`、`03-金匮/方剂剂量换算.md`（产物非源）。全角括号副本规则已确认无匹配文件，保留为防御性兜底。
@@ -1505,7 +1507,7 @@ PairingResult(pairs, only_ancient: list[str], only_gram: list[str])
 | 13 | `embed/`：切片 + Embedder | `chunk.py`（表格行/医案条/框架小节）+ `embedder.py`（`HashingEmbedder` 单测用、`BgeM3Embedder` 仅 integration）+ `indexer.py` | 单测**不下载模型**；`chunk_vector.embedding` 维度 1024；`chunking_version` 落 `index_version` |
 | 14 | `admin/reindex.py` + `git_utils.py` | 全流程编排：corpus → parse → identity → verify → load → embed；绑 `distilled/` git hash；**蓝绿切换**（重建期间旧索引可用，PRD 6.6） | `GET /healthz` 与 `POST /api/admin/reindex` 通；`index_version` 至少两行且旧行仍被查询命中 |
 | 15 | `admin/quality.py` + 对外 API | FR-13 七张清单 + `GET /api/admin/quality-report`；候选队列读写（⑦） | 七张清单齐；⑦ 队列规模与附录 C 实测一致（54 行抽不出名 + 6+ 对 `方` 尾分裂） |
-| 16 | M0 前置收口 | `0600` 权限修正（`汉唐方剂索引.md`、`临证诊断与治则补充.md`）；`docker-compose.yml` 交付但本地不依赖 | `git ls-files -s` 权限位为 100644；compose 文件可被 CI 读取（不要求本地可 run） |
+| 16 | M0 前置收口 ✅ | `0600` 权限修正（`汉唐方剂索引.md`、`临证诊断与治则补充.md`）；`docker-compose.yml` 交付但本地不依赖 | `ls -l` 两位为 `-rw-r--r--`（git 不记录 rw 位，`git ls-files -s` 恒为 100644，不能作为判据）；compose 文件已入库 |
 
 **已知的计划外风险（执行到相关任务时须知）**：
 - `scripts/search.py` 顶部 `REPO = "/Users/..."` 硬编码；Task 1 只用 `norm`，全量遍历由 `corpus.py` 取代。
