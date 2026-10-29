@@ -80,6 +80,14 @@ def test_herb_taste_and_organ_filters(indexed):
     assert heart["total"] == 142
 
 
+def test_herb_unclassified_taste_and_organ_stay_reachable(indexed):
+    """FR-8：未归类味/脏不能在浏览里消失；`未归` 筛 NULL（实测各 1 味，(鼯)鼠）。"""
+    taste = indexed.get("/api/herbs", params={"taste_group": "未归"}).json()
+    assert taste["total"] == 1 and taste["items"][0]["name"] == "(鼯)鼠"
+    organ = indexed.get("/api/herbs", params={"organ_group": "未归"}).json()
+    assert organ["total"] == 1 and organ["items"][0]["name"] == "(鼯)鼠"
+
+
 def test_herb_detail_has_full_fields_and_formulas(indexed):
     hid = _id(indexed, "/api/herbs", "name", "牡桂")
     d = indexed.get(f"/api/herbs/{hid}").json()
