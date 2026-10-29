@@ -14,6 +14,10 @@ def engine():
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.drop_all(eng)
     Base.metadata.create_all(eng)
+    from app.db.schema import ensure_search_indexes
+
+    with eng.begin() as conn:
+        ensure_search_indexes(conn)
     yield eng
     Base.metadata.drop_all(eng)
     eng.dispose()

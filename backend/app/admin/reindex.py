@@ -138,6 +138,10 @@ def run_reindex(session: Session, embedder=None, *,
                                  embedding_model_version=model_version)
 
     corpus = build_corpus()
+    # HNSW 必须在写入事务内建：另开连接会与未提交 INSERT 抢表锁
+    from app.db.schema import ensure_search_indexes
+
+    ensure_search_indexes(session)
     summary = loaders.load_corpus(session, corpus)
     if fail_after_load:
         raise RuntimeError("注入失败：验证原子发布回滚")

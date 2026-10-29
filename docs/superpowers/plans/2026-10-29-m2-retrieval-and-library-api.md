@@ -105,16 +105,26 @@
     医案 → `06-医案/临床问答对.md#<no>`；框架 → `<doc>#<section>`
   - 索引守卫：无 ready 版本 → `IndexNotReady`；模型版本不一致 → `EmbeddingMismatch`
 
-- [ ] **Step 1: 写失败测试（纯函数层）**：exact 压过更高分的 vector；同名多切片去重；`top` 截断；
+- [x] **Step 1: 写失败测试（纯函数层）**：exact 压过更高分的 vector；同名多切片去重；`top` 截断；
       kind 过滤；字面分只由 overlap 决定
-- [ ] **Step 2: 实现 `query.py` 并通过单测**
-- [ ] **Step 3: 实现 `retriever.py` + `db/schema.py:ensure_search_indexes`**
-- [ ] **Step 4: 在 `run_reindex` 末尾创建 HNSW（`IF NOT EXISTS`），conftest 建表后同样创建**
-- [ ] **Step 5: DB 集成测试**（真实语料 + HashingEmbedder）：`射干麻黄汤` 精确第一；
+- [x] **Step 2: 实现 `query.py` 并通过单测**
+- [x] **Step 3: 实现 `retriever.py` + `db/schema.py:ensure_search_indexes`**
+- [x] **Step 4: 在 `run_reindex` 末尾创建 HNSW（`IF NOT EXISTS`），conftest 建表后同样创建**
+- [x] **Step 5: DB 集成测试**（真实语料 + HashingEmbedder）：`射干麻黄汤` 精确第一；
       `桂枝` 精确命中 `牡桂`；`咳嗽气喘痰白不能平躺` 的向量 Top-5 至少含 `杏仁` 或 `桑白皮`
       （以实测为准，测前先跑一遍看结果，不得先写断言）
 
-**验收**：单测 + DB 测试全绿；无 ready 索引/模型版本不符各有显式错误测试。
+**验收（已完成，2026-10-29）**：199 passed + 1 xfail。实测：
+- `射干麻黄汤` → formula exact 第 1，锚点 `03-金匮/金匮方剂库.md#辨肺痿肺痈咳嗽上气病脉证治`
+- `桂枝` → herb exact 第 1，标题 `牡桂`（HR-2 的现代名/古名合并成立）
+- `桂枝汤` 的 exact 只有 1 条；36 个加减方只出现在 vector 通道（`加减写法` 未污染召回）
+- `咳嗽气喘痰白不能平躺` → herb Top-5：白前 0.301、**杏核仁 0.291**、诃黎勒、天门冬、五味子；
+  case 通道第 1 为 `问11`。这是 HashingEmbedder 的词袋结果，**不是语义质量证明**
+- `section="太阳"` 前缀匹配语料里的 `太阳病`；`section="少阴"` 正确排除无少阴出处的桂枝汤
+- HNSW(`vector_cosine_ops`) 由 reindex 在同一事务内创建
+
+**已知限制**：17/426 个方名既无 evidence 也无 variant（合方无组成、医案中的候选名），
+锚点落为 `方名候选#<name>`，不是真实文件路径。M2 不隐藏这些结果，但在前端应以「未溯源」样式呈现。
 
 ---
 

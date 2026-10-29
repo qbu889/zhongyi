@@ -20,6 +20,7 @@ class HashingEmbedder:
     """
 
     dim = EMBEDDING_DIM
+    version = "hashing-2026.10"
 
     def __init__(self, dim: int = EMBEDDING_DIM):
         self.dim = dim
@@ -47,6 +48,7 @@ class BgeM3Embedder:
     """真实 BAAI/bge-m3（1024 维）。仅在 `ZY_ALLOW_INTEGRATION=1` 时可用。"""
 
     dim = EMBEDDING_DIM
+    version = "bge-m3"
 
     def __init__(self, model_name: str = "BAAI/bge-m3"):
         if os.getenv("ZY_ALLOW_INTEGRATION") != "1":
