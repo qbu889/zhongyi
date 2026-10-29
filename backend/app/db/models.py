@@ -179,6 +179,8 @@ class Case(Base):
     category: Mapped[str | None] = mapped_column(Text)
     chief_complaint: Mapped[str | None] = mapped_column(Text)
     pathogenesis: Mapped[str | None] = mapped_column(Text)
+    # 「治」段原文（含加味写法）；`treatment_formula_ids` 只记解析出的主方，二者不是同一层信息
+    treatment: Mapped[str | None] = mapped_column(Text)
     treatment_formula_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list)
     added_herbs: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)  # 随证加味，与主方分列
     tips: Mapped[str | None] = mapped_column(Text)

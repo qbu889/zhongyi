@@ -184,7 +184,7 @@ herb(id, name /*本经古名，如 牡桂/茈胡*/, alias[] /*现代名，来自
 acupoint(id, name, meridian /*十二经*/, role /*五输/原/络/郄/募*/, location, actions)
 acupoint_symptom(acupoint_id, symptom, source_doc)
 case(id, no /*医案问NN*/, category, chief_complaint, pathogenesis,
-     treatment_formula_ids, tips, raw_md)
+     treatment /*「治」段原文，含加味写法*/, treatment_formula_ids, added_herbs, tips, raw_md)
 framework_chunk(id, doc /*六经框架/内经核心理论/临证补充*/, section, content, chunk_order)
 chunk_vector(id, ref_type, ref_id, chunk_index, content, embedding vector(1024))
     -- 唯一键 (ref_type, ref_id, chunk_index)：ref_id 取 DB 主键、index 取分块顺序，

@@ -199,15 +199,30 @@
   返回 `formula_count`（`herb_id` 反查；悬空药味不计入并在文档注明 FR-13 ⑤）。
   `GET /api/herbs/{id}`：全字段 + `formulas[]`（id/name）+ `flavor` 为空时 `flavor_state=missing`
   （不生成推测文案）。
+  `taste_group`/`organ_group` 传 `未归` 筛 NULL（FR-8 的「其他/未归」分组，实测各 1 味）。
 - `GET /api/acupoints`：`q` 名、`meridian`、`role`、`symptom`（`acupoint_symptom` contains，
   按症取穴）；`GET /api/acupoints/{id}`：穴位 + `symptoms[]` + 来源文档。
 - `GET /api/cases`：`category`、`q`（主诉）；`GET /api/cases/{id}`：四段 + `treatment_formulas[]`。
 - 药/穴/案列表均 `limit ≤ 100`、`offset`。
 
-- [ ] **Step 1: 写失败测试**（`桂枝`→`牡桂`；`flavor_state=missing` 的条目存在；
+- [x] **Step 1: 写失败测试**（`桂枝`→`牡桂`；`flavor_state=missing` 的条目存在；
       `symptom=项强` 至少返回后溪/天柱（实测校准）；医案 30、`问11` 治方含射干麻黄汤）
-- [ ] **Step 2: 实现三个模块，注意 `formula_count` 用聚合而非逐行查询**
-- [ ] **Step 3: 实测并回填断言**
+- [x] **Step 2: 实现三个模块，注意 `formula_count` 用聚合而非逐行查询**
+- [x] **Step 3: 实测并回填断言**
+
+**验收（已完成，2026-10-30）**：16 个用例全绿；全量 230 passed + 1 xfailed。实测：
+
+- 中药 379 味：`q=桂枝` → 牡桂（alias 桂枝，性味 辛甘，`formula_count=92`）；
+  无性味值 **100** 味（88 无标记 + 8 标记后无值 + **4 标记有信号但抽不出值**：旋华/蠡鱼/萆薢/雀瓮，
+  `flavor_source_state=extracted` 却 `flavor=''`）→ API 的 `flavor_state` 按**值**判定，
+  这 4 味仍报 `missing`；`flavor_source_state` 原样透出，差异不掩盖。
+- 穴位 352 个、症-穴记录 54 条：`symptom=项强` → 6 穴（后溪/天柱/风池/百会/涌泉/然谷）；
+  `meridian=手太阳小肠经` 18 穴；`role=输`（contains）命中 12 穴，含 `输·原` 复合值。
+- 医案 30 例：`category=经典方症类` 7 例；`q=咳痰` → 问11；问11 治方按原文顺序
+  `[射干麻黄汤, 乌梅丸, 厚朴三物汤]`、加味 `[桔梗]`；**「要诀」只有问7/问15 两例**，
+  其余返回 `null`（不补空串）。问1 有「治」段文字但无方名 → `treatment_formulas=[]`。
+- 为此给 `case` 补 `treatment` 列（「治」段原文）：原模型只有 `treatment_formula_ids` + `raw_md`，
+  详情页无法在不重新解析请求的情况下展示处方原文；loader 同步写入。
 
 ---
 

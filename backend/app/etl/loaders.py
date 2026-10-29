@@ -265,14 +265,14 @@ def load_corpus(session: Session, corpus) -> LoadSummary:
 
     # ---- case ----
     case_rows = [{"no": cs.no, "category": cs.category, "chief_complaint": cs.chief_complaint,
-                  "pathogenesis": cs.pathogenesis,
+                  "pathogenesis": cs.pathogenesis, "treatment": cs.treatment,
                   "treatment_formula_ids": [formula_id[n] for n in cs.formula_names if n in formula_id],
                   "added_herbs": cs.added_herbs, "tips": cs.tips, "raw_md": cs.raw_md}
                  for cs in corpus["cases"]]
     _insert(session, models.Case, case_rows, ["no"],
             lambda ex: {c: getattr(ex, c) for c in
-                        ("category", "chief_complaint", "pathogenesis", "treatment_formula_ids",
-                         "added_herbs", "tips", "raw_md")})
+                        ("category", "chief_complaint", "pathogenesis", "treatment",
+                         "treatment_formula_ids", "added_herbs", "tips", "raw_md")})
     summary.counts["case"] = len(case_rows)
 
     # ---- acupoint（症状表引用的穴名若不在穴位库，补 meridian=None 的行，不丢数据）----
