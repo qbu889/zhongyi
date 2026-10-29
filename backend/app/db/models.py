@@ -221,6 +221,8 @@ class PendingFormulaName(Base):
     suggested_parent: Mapped[str | None] = mapped_column(Text)
     confidence: Mapped[float | None] = mapped_column(Float)
     evidence_text: Mapped[str | None] = mapped_column(Text)
+    # 入库时为何落队列：无方名 / 一行多方 / 有名但组成为空 / 合方无组成
+    reason: Mapped[str | None] = mapped_column(Text)
     decision: Mapped[str] = mapped_column(Text, default="pending")   # pending|confirmed_new|merged|noise
     decided_by: Mapped[str | None] = mapped_column(Text)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -240,6 +242,8 @@ class IndexVersion(Base):
     case_count: Mapped[int] = mapped_column(Integer, default=0)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(Text, default="building")   # building|ready|retired
+    # reindex 的 skipped / noise / dangling 计数落这里：质量报告与 reindex 日志必须同一口径
+    notes: Mapped[dict | None] = mapped_column(JSONB)
     embedding_model_version: Mapped[str | None] = mapped_column(Text)
     chunking_version: Mapped[str | None] = mapped_column(Text)
     extract_rule_version: Mapped[str | None] = mapped_column(Text)

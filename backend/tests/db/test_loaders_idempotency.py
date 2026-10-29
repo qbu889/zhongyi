@@ -26,12 +26,12 @@ def test_silent_skips_are_declared_in_the_summary(db_session, corpus):
     summary = loaders.load_corpus(db_session, corpus)
     assert summary.counts["pair"] == 77
     assert summary.skipped.get("pair_missing_variant") == 4
-    assert summary.noise_tokens == 30, "解析噪声被剔除且已计数"
-    assert summary.dangling_herb_items == 432, "herb_id 悬空数（FR-13 ⑤ 的规模）"
+    assert summary.noise_tokens == 34, "解析噪声被剔除且已计数"
+    assert summary.dangling_herb_items == 449, "herb_id 悬空数（FR-13 ⑤ 的规模）"
     assert summary.counts["formula"] == 423
     assert summary.counts["evidence"] == 610
     assert summary.counts["component"] == 28       # 14 合方 × 2 成分边
-    assert summary.counts["pending"] == 57
+    assert summary.counts["pending"] == 64   # 含合方无组成 3 / 一行多方 3 / 有名无组成 1
 
 
 def test_second_load_is_idempotent(db_session, corpus):

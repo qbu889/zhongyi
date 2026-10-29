@@ -1457,7 +1457,39 @@ PairingResult(pairs, only_ancient: list[str], only_gram: list[str])
 
 ---
 
-## Task 15–16：M1 后半段（**待细化**，2026-10-28 登记）
+## Task 15: 质量报告七张清单 + 管理端端点
+
+**Files:** `backend/app/admin/quality.py`、`backend/tests/db/test_quality_report.py`、
+`backend/tests/unit/test_admin_api.py`；`IndexVersion` 加 `notes JSONB`（承载 reindex 的 skipped 计数）。
+
+七张清单全部从**数据库**读，不重跑解析（报告要能在 reindex 之后独立复现）：
+
+| # | 清单 | 数据来源 | 实测基线 |
+|---|---|---|---|
+| ① | 药材差异 | `formula_variant_pair.herb_diff` 非空 | **43**（77 个入库配对中；verify 侧 81 对时为 47） |
+| ② | 剂量偏差>50% | `formula_variant_pair.dose_dev` | **63** 方 |
+| ③ | 解析失败行 | `pending_formula_name.reason != no_formula_name` | **7** 行（一行多方 3 / 合方无组成 3 / 有名无组成 1） |
+| ④ | 注记误抽为药味 | `formula_item.herb_text` 命中 `is_annotation` | **7** 行（原表写 43 是我拿噪声数凑的，实测已纠正） |
+| ⑤ | `herb_id` 悬空 | `formula_item.herb_id IS NULL` | **449** 行 / 212 词 |
+| ⑥ | 换算状态分布 | `formula_item.dose_state` 计数 + `herb` 缺失数 | exact 1795 / approx 119 / count_only 123 / absent 219 / unknown_unit 26；1 味未归、96 味无性味 |
+| ⑦ | 待确认方名 | `pending_formula_name` 按 decision 分组 | **64**（全 pending）|
+
+`skipped`（如 pair 4 对因克数行无药味而不入库）不重算，由 reindex 写入 `index_version.notes`，
+报告直接读——否则「报告说没问题、reindex 日志说跳过了」两套口径。
+
+**端点**：`GET /api/admin/quality-report`、`POST /api/admin/reindex`。
+⚠️ 二者**一期无鉴权**（§10 E2 未决）；测试里显式断言它们可匿名访问，是为了让 E2 落地时这个测试必须被改，
+而不是留个「以为早就有鉴权」的错觉。
+
+- [x] **Step 1**: 写失败测试（七张清单键存在、数字与基线吻合、端点 200 且 JSON 结构稳定）
+- [x] **Step 2**: 跑红
+- [x] **Step 3**: 实现 `quality.py` + 挂 FastAPI 路由（`/api/admin/*`）
+- [x] **Step 4**: 真实语料 reindex 后跑报告，逐项核对
+- [x] **Step 5**: 提交
+
+---
+
+## Task 16：M1 后半段（**待细化**，2026-10-28 登记）
 
 原计划到 Task 7 就断了，而 File Structure 声明的 8 个模块一个任务都没有。
 以下按「先修 Task 1-7、后半段边做边补」的决策登记为待办；**每个任务开工前必须先补齐 5 步式分解**，

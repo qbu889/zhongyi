@@ -122,10 +122,14 @@ def load_corpus(session: Session, corpus) -> LoadSummary:
                              "ordinal": 1, "source_row_no": a.source_row_no,
                              "raw_composition": "；".join(f"{h.herb_text} {h.dose_text}" for h in a.herbs),
                              "extract_rule_version": "identity-2026.10"})
+    # 克数版 variant 的入库条件与「参与配对」的条件**不是一回事**：
+    # D10 要求合方行只要组成非空就得存下来（实测 14 个合方里 10 个有组成），
+    # 而 D9 只禁止它们参与变体对照——那层过滤在 verify._index_gram 里。
+    # 一行多方的组成仍不入库：不知道该摊派给哪一个，宁可留队列。
     gram_by_row: dict[int, tuple[int, int]] = {}
     for c in corpus["classic"]:
-        if c.kind != "single" or len(c.names) != 1 or not c.herbs:
-            continue                      # 一行多方的组成不摊派给任何方名
+        if len(c.names) != 1 or not c.herbs:
+            continue
         fid = formula_id[c.names[0]]
         variant_rows.append({"formula_id": fid, "source_doc": "经典配方", "dose_basis": "gram",
                              "ordinal": 1, "source_row_no": c.source_row_no,
@@ -163,7 +167,7 @@ def load_corpus(session: Session, corpus) -> LoadSummary:
         key = (formula_id[a.name], "经方组成", a.source_row_no)
         add_items(key, [(h.herb_text, h.dose_text, h.dose_g, h.dose_state) for h in a.herbs])
     for c in corpus["classic"]:
-        if c.kind != "single" or len(c.names) != 1 or not c.herbs:
+        if len(c.names) != 1 or not c.herbs:
             continue
         key = (formula_id[c.names[0]], "经典配方", c.source_row_no)
         add_items(key, [(n, f"{g:g}克", g, "exact") for n, g in c.herbs])
@@ -224,15 +228,29 @@ def load_corpus(session: Session, corpus) -> LoadSummary:
     summary.counts["pair"] = len(pair_rows)
 
     # ---- pending（人工判定不覆盖）----
-    pending_rows = [{"raw_name": c.raw_name_field[:500], "doc": "方剂库-经典配方.md",
-                     "source_row_no": c.source_row_no, "suggested_parent": None,
-                     "confidence": 0.0, "evidence_text": c.remark[:500],
-                     "decision": "pending"}
-                    for c in corpus["classic"] if not c.names]
+    # 凡「没有产出任何 variant」的克数版行都必须落队列，否则 FR-13 ③ 无从计算：
+    # 有名但组成为空的行（实测 方#76/#105/#172）此前既无 variant 也无 pending，等于完全不可见。
+    pending_rows = []
+    for c in corpus["classic"]:
+        produced_variant = len(c.names) == 1 and bool(c.herbs)
+        if produced_variant:
+            continue
+        if not c.names:
+            reason = "no_formula_name"
+        elif len(c.names) > 1:
+            reason = "multi_name_row"
+        elif c.kind == "pair":
+            reason = "pair_without_composition"
+        else:
+            reason = "no_composition"
+        pending_rows.append({"raw_name": c.raw_name_field[:500], "doc": "方剂库-经典配方.md",
+                             "source_row_no": c.source_row_no, "suggested_parent": None,
+                             "confidence": 0.0, "evidence_text": c.remark[:500],
+                             "reason": reason, "decision": "pending"})
     _insert(session, models.PendingFormulaName, pending_rows,
             ["raw_name", "doc", "source_row_no"],
             lambda ex: {"confidence": ex.confidence, "evidence_text": ex.evidence_text,
-                        "suggested_parent": ex.suggested_parent})
+                        "suggested_parent": ex.suggested_parent, "reason": ex.reason})
     summary.counts["pending"] = len(pending_rows)
 
     # ---- case ----

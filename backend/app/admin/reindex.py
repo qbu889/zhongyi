@@ -135,6 +135,8 @@ def run_reindex(session: Session, embedder=None, *,
         case_count=summary.counts.get("case", 0),
         chunk_count=embedded["chunks"],
         embedding_model_version=model_version,
+        notes={"skipped": summary.skipped, "noise_tokens": summary.noise_tokens,
+               "dangling_herb_items": summary.dangling_herb_items, "pair_count": len(corpus["pairs"].pairs)},
         chunking_version=CHUNKING_VERSION,
         extract_rule_version=EXTRACT_RULE_VERSION,
     )

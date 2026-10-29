@@ -11,3 +11,13 @@ def make_engine(url: str | None = None) -> Engine:
 
 def get_sessionmaker(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, future=True)
+
+
+def get_session():
+    """FastAPI 依赖：每请求一个 session，请求结束即关。"""
+    session = get_sessionmaker(make_engine())()
+    try:
+        yield session
+    finally:
+        session.close()
+
