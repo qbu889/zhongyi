@@ -85,6 +85,7 @@
 - 向量召回：中文 embedding 模型对"症状描述→条文/医案"做语义匹配，解决 `search.py` 只能字面/编辑距离匹配的短板；
 - 关键词/结构化召回：方名、药名、穴名**精确匹配优先**（B/C 类查询不允许被模糊结果污染）；药名精确匹配必须**同时命中 `herb.name`（本经古名）与 `herb.alias`（现代名）**，否则用户问「桂枝」会直接落到语义召回（现状问题 1）；
 - 两路结果合并 rerank（一期用规则加权：精确命中 > 向量分数 > 字面重叠），返回 top-k 证据，每条证据带锚点 `文件#章节#条目`。
+- **切片是检索摘要，不是全文**（Task 13 定稿）：性味/功效/禁忌等字段进切片时限长 220 字（实测丹砂的禁忌列约 700 字，含海藏引文与【炮制】整段，整段入向量会稀释检索信号）；全文仍由 `GET /api/evidence/{ref}` 提供。**源表误抽的注记（「瓜蒂散是吐剂」「表症」）不进切片**——切片会被当作答案依据引用，注记入内等于把脏数据喂给模型，改为在切片尾部如实标注「另有 N 条疑似注记未列入」。性味无值的 96 味在切片里写「本经未载性味」，不留空（留空＝邀请模型补齐，违反 NFR-3）。
 
 **FR-3 生成与门禁（本系统的差异化重点）**：
 - LLM 仅允许引用检索到的证据（带 `文件/章节/方#/医案号` 引用锚点）；
@@ -185,7 +186,9 @@ acupoint_symptom(acupoint_id, symptom, source_doc)
 case(id, no /*医案问NN*/, category, chief_complaint, pathogenesis,
      treatment_formula_ids, tips, raw_md)
 framework_chunk(id, doc /*六经框架/内经核心理论/临证补充*/, section, content, chunk_order)
-chunk_vector(id, ref_type, ref_id, content, embedding vector(1024))  -- 所有可检索文本切片
+chunk_vector(id, ref_type, ref_id, chunk_index, content, embedding vector(1024))
+    -- 唯一键 (ref_type, ref_id, chunk_index)：ref_id 取 DB 主键、index 取分块顺序，
+    -- 二者稳定才能让重复 reindex 只更新不新增（蓝绿比对的前提）。长小节按空行分块，短小节整块。
 answer_log(id, query, intent_class /*A-F*/, evidence_refs jsonb, refused bool, created_at)
 ```
 
@@ -308,6 +311,8 @@ formula_variant_pair(formula_id, variant_a, variant_b, pairing_method /*declared
 不得因覆盖率低而放开门禁。
 
 **Task 12 整库入库基线**（真实语料，跑两遍行数不变）：`herb` 379 / `formula` 423 / `formula_item` 2197 / `formula_evidence` 610 / `formula_variant_pair` **77**（verify 产 81 对，4 对因克数版该行无可解析药味而跳过——已计入 `LoadSummary.skipped`，不静默）/ `formula_component` 28（14 合方×2）/ `pending_formula_name` 57 / `case` 30 / `acupoint` 352 / `acupoint_symptom` 54 / `framework_chunk` 29；噪声剔除 30 项、`herb_id` 悬空 432 行。
+
+**Task 13 切片基线**（真实语料，fake embedder）：**1824** 条切片 = herb 379 + formula 423 + evidence 610 + case 30 + framework 30（长小节分块后比 29 个源块多 1）+ acupoint 352；重跑行数不变，切片键无重复，`embedding` 维度 1024。
 
 **Task 11 实测的配对质量**（`formula_variant_pair`，噪声过滤后）：
 配对 **81** 方 → 灰勾（药材集合完全一致）**34**、黄牌（有药材差异）**47**；

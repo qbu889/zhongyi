@@ -196,10 +196,14 @@ class FrameworkChunk(Base):
 
 class ChunkVector(Base):
     __tablename__ = "chunk_vector"
+    # 切片自然键：ref_id 用数据库主键、chunk_index 由内容分块顺序决定，
+    # 二者稳定才能让重复 reindex 只更新不新增（蓝绿比对的前提）。
+    __table_args__ = (UniqueConstraint("ref_type", "ref_id", "chunk_index"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ref_type: Mapped[str] = mapped_column(Text)
     ref_id: Mapped[int] = mapped_column(Integer)
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)   # 一个引用可切多块（长小节）
     content: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM))
 

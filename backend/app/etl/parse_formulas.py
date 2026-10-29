@@ -41,8 +41,13 @@ class AncientFormula:
         return bool(self.herbs) and all(h.dose_state == "exact" for h in self.herbs)
 
 
-def _is_annotation(herb_text: str) -> bool:
+def is_annotation(herb_text: str) -> bool:
+    """注记被误抽成药味的判据。切片层也用它——注记不得进入被当作证据引用的检索切片。"""
     return any(marker in herb_text for marker in _ANNOTATION_MARKERS)
+
+
+def _is_annotation(herb_text: str) -> bool:
+    return is_annotation(herb_text)
 
 
 def parse_ancient(text: str, source_doc: str = "方剂库-经方组成.md") -> list[AncientFormula]:

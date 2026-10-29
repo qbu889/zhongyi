@@ -1399,7 +1399,40 @@ PairingResult(pairs, only_ancient: list[str], only_gram: list[str])
 
 ---
 
-## Task 13–16：M1 后半段（**待细化**，2026-10-28 登记）
+## Task 13: 切片与 embedding（chunk / embedder / indexer）
+
+**Files:** `backend/app/embed/chunk.py`、`backend/app/embed/embedder.py`、`backend/app/embed/indexer.py`、
+`backend/app/embed/__init__.py`、`backend/tests/unit/test_chunk.py`、`backend/tests/unit/test_indexer.py`；
+`models.ChunkVector` 加自然键唯一约束。
+
+**切片单元（决定 FR-2 召回粒度）**：
+
+| ref_type | 切片来源 | 内容组成 |
+|---|---|---|
+| `herb` | `herb` 行 | 古名 + 别名 + 性味（缺失时写明「本经未载性味」）+ 功效 + 禁忌 |
+| `formula` | `formula` + 其 variant/item | 方名 + 组成（药味·克数·状态）+ 出处摘要；**pair 方标注「合方：A + B」** |
+| `evidence` | `formula_evidence` 行 | 方名 + 六经/病段 + 原文节选 |
+| `case` | `case` 行 | 主诉 + 答 + 治（含加味）|
+| `framework` | `framework_chunk` | 小节标题 + 整块内容（不逐行切碎，FR-5 需要整表） |
+| `acupoint` | `acupoint` + 其症状 | 穴名 + 经络 + 角色 + 主治 |
+
+**三条约束**：
+1. **切片键必须稳定**：`(ref_type, ref_id, chunk_index)` 唯一，`chunk_index` 由内容切分顺序决定
+   ——否则每次 reindex 都产生重复向量行，蓝绿切换无从比对。
+2. **单测不得加载模型**（全局约束）：`HashingEmbedder` 用确定性哈希（同输入同向量、维度 1024、单位模长），
+   `BgeM3Embedder` 只在 `@pytest.mark.integration` 下实例化。
+3. **模板文本不得夹带无出处内容**：切片是检索证据源，写进切片等于写进答案依据；
+   性味缺失者写「本经未载性味」而非空着让 LLM 补（NFR-3）。
+
+- [x] **Step 1**: 写失败测试（切片单元与数量、稳定键、模板含缺失标注、fake embedder 确定性）
+- [x] **Step 2**: 跑红
+- [x] **Step 3**: 实现 chunk/embedder/indexer
+- [x] **Step 4**: 真实语料回归：切片总数、各 ref_type 计数、重跑不增行；`embedding` 维度 1024 落库
+- [x] **Step 5**: 提交
+
+---
+
+## Task 14–16：M1 后半段（**待细化**，2026-10-28 登记）
 
 原计划到 Task 7 就断了，而 File Structure 声明的 8 个模块一个任务都没有。
 以下按「先修 Task 1-7、后半段边做边补」的决策登记为待办；**每个任务开工前必须先补齐 5 步式分解**，
