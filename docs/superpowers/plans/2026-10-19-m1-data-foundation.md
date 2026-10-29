@@ -1236,7 +1236,40 @@ git commit -m "feat(m1): 十二经穴位库 + 治症取穴 parser"
 
 ---
 
-## Task 8–16：M1 后半段（**待细化**，2026-10-28 登记）
+## Task 8: 医案 ETL（case + 主方/加味分离）
+
+**Files:**
+- Create: `backend/app/etl/parse_cases.py`, `backend/tests/unit/test_parse_cases.py`
+
+**实测结构（2026-10-29 复核，开工依据）**：
+- `### 问N｜标题` 共 **30** 条；`## ` 给出 5 个类别（重症癌症/经典方症/针灸即时取效/妇科疑难/辨证思路示范）
+  + 末尾「辨证心法小结」（9 行表格，**不是医案**，归 Task 9 的 framework_chunk）。
+- 字段实测出现数：`主诉` 29/30、`答` 30/30、`治` **22/30**（问8/9/14/18/20/24/25/26 无治）、`要诀` 2/30。
+- ⚠️ **`＋` 在本语料是通用「与」，不是加味专用符**：实测同时存在
+  穴位对（`肺俞＋中府`）、药对（`生附子＋桂枝`）、病机并列（`肺中积水＋湿热`）、
+  症状并列（`手脚冷＋失眠`）与真正的**方+加味药**（问11 `射干麻黄汤＋桔梗`）。
+  → 规则：**仅当 `＋` 左侧能解析为已知方名时**，右侧才进 `added_herbs`；否则整段留 `raw_md`，
+  绝不把 `桔梗` 挂到与方无关的并列短语上。
+- 另有前缀污染：`兼乌梅丸` 会被 `[一-鿿]{2,10}(汤|丸|散)` 连「兼」一起抽出 → 需剥离 `兼/用/合` 前缀。
+
+**Interfaces:**
+- Produces:
+  - `parse_cases.CaseRecord(no, category, title, chief_complaint, pathogenesis, treatment,
+    tips, formula_names: list[str], added_herbs: list[str], raw_md, source_line)`
+  - `parse_cases.parse_clinical_cases(text: str) -> list[CaseRecord]`
+- Consumes: `identity.normalize_name`、`normalizers.norm`（不碰 ORM）
+- 落库映射：`formula_names` → `case.treatment_formula_ids`（由 loaders 解析，未命中者进候选队列）；
+  **无 `治` 的 8 条 `formula_names` 必须为空**，禁止从 `答` 里猜方。
+
+- [x] **Step 1**: 写失败测试（逐字取 问1/问4/问11 三条 + 无治断言）
+- [x] **Step 2**: 跑红
+- [x] **Step 3**: 实现 `parse_cases.py`
+- [x] **Step 4**: 真实语料回归：30 条、主诉 29、答 30、治 22、要诀 2；问11 加味=['桔梗']；问1 formula_names==[]
+- [x] **Step 5**: 提交
+
+---
+
+## Task 9–16：M1 后半段（**待细化**，2026-10-28 登记）
 
 原计划到 Task 7 就断了，而 File Structure 声明的 8 个模块一个任务都没有。
 以下按「先修 Task 1-7、后半段边做边补」的决策登记为待办；**每个任务开工前必须先补齐 5 步式分解**，
