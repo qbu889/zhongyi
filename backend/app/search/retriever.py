@@ -17,13 +17,12 @@ from app.db.models import (
     ChunkVector,
     Formula,
     FormulaAlias,
-    FormulaDoseVariant,
     FormulaEvidence,
-    FormulaItem,
     FrameworkChunk,
     Herb,
     IndexVersion,
 )
+from app.search import anchors as anchor_mod
 from app.search import query as qmod
 
 SNIPPET_CHARS = 200
@@ -31,8 +30,6 @@ RECALL_MULTIPLIER = 5
 RECALL_CAP = 100
 VECTOR_KINDS = {"formula", "herb", "evidence", "case", "acupoint", "framework"}
 VALID_KINDS = VECTOR_KINDS
-
-_SOURCE_DOCS = {"经方组成": "方剂库-经方组成.md", "经典配方": "方剂库-经典配方.md"}
 
 
 class IndexNotReady(RuntimeError):
@@ -52,10 +49,6 @@ class SearchResult:
 def _clip(text: str | None, limit: int = SNIPPET_CHARS) -> str:
     text = text or ""
     return text if len(text) <= limit else text[:limit] + "…"
-
-
-def _anchor_join(*parts) -> str:
-    return "#".join(str(p).strip() for p in parts if p not in (None, ""))
 
 
 def _exact_hits(session, q: str, kinds: set[str]) -> list[qmod.Hit]:
@@ -152,39 +145,18 @@ def _enrich(session, hits: list[qmod.Hit]) -> list[qmod.Hit]:
         names = dict(session.execute(
             select(Formula.id, Formula.canonical_name)
             .where(Formula.id.in_(ids["formula"]))).all())
-        ev = session.execute(
-            select(FormulaEvidence.formula_id, FormulaEvidence.source_doc,
-                   FormulaEvidence.six_jing, FormulaEvidence.bing_duan,
-                   FormulaEvidence.clause_no, FormulaEvidence.formula_no)
-            .where(FormulaEvidence.formula_id.in_(ids["formula"]))
-            .order_by(FormulaEvidence.id)).all()
-        first_ev = {}
-        for fid, doc, six, bing, clause, fno in ev:
-            first_ev.setdefault(fid, (doc, six or bing, clause or fno))
-        variant_doc: dict[int, str] = {}
-        for fid, doc in session.execute(
-                select(FormulaDoseVariant.formula_id, FormulaDoseVariant.source_doc)
-                .where(FormulaDoseVariant.formula_id.in_(ids["formula"]))
-                .order_by(FormulaDoseVariant.id)):
-            variant_doc.setdefault(fid, doc)   # 先到的 variant 优先（经方组成在 gram 之前）
+        anchors_by_id = anchor_mod.formula_anchors(session, ids["formula"])
         for fid in ids["formula"]:
             if fid not in names:
                 continue
             titles[("formula", fid)] = names[fid]
-            if fid in first_ev:
-                doc, where, no = first_ev[fid]
-                anchors[("formula", fid)] = _anchor_join(doc, where, no)
-            elif fid in variant_doc:
-                anchors[("formula", fid)] = _anchor_join(
-                    _SOURCE_DOCS.get(variant_doc[fid], variant_doc[fid]), names[fid])
-            else:
-                anchors[("formula", fid)] = _anchor_join("方名候选", names[fid])
+            anchors[("formula", fid)] = anchors_by_id.get(fid, "")
 
     if ids.get("herb"):
         for hid, name in session.execute(
                 select(Herb.id, Herb.name).where(Herb.id.in_(ids["herb"]))):
             titles[("herb", hid)] = name
-            anchors[("herb", hid)] = _anchor_join("04-神农本草经/中药库.md", name)
+            anchors[("herb", hid)] = anchor_mod.herb_anchor(name)
 
     if ids.get("evidence"):
         rows = session.execute(
@@ -196,27 +168,27 @@ def _enrich(session, hits: list[qmod.Hit]) -> list[qmod.Hit]:
             .where(FormulaEvidence.id.in_(ids["evidence"]))).all()
         for eid, _fid, name, doc, six, bing, clause, fno in rows:
             titles[("evidence", eid)] = f"{name}（{six or bing or '出处未标'}）"
-            anchors[("evidence", eid)] = _anchor_join(doc, six or bing, clause or fno)
+            anchors[("evidence", eid)] = anchor_mod.evidence_anchor(doc, six, bing, clause, fno)
 
     if ids.get("case"):
         for cid, no, category in session.execute(
                 select(Case.id, Case.no, Case.category).where(Case.id.in_(ids["case"]))):
             titles[("case", cid)] = f"{no}（{category or '未分类'}）"
-            anchors[("case", cid)] = _anchor_join("06-医案/临床问答对.md", no)
+            anchors[("case", cid)] = anchor_mod.case_anchor(no)
 
     if ids.get("acupoint"):
         for aid, name, meridian in session.execute(
                 select(Acupoint.id, Acupoint.name, Acupoint.meridian)
                 .where(Acupoint.id.in_(ids["acupoint"]))):
             titles[("acupoint", aid)] = name
-            anchors[("acupoint", aid)] = _anchor_join("05-针灸/十二经穴位库.md", meridian, name)
+            anchors[("acupoint", aid)] = anchor_mod.acupoint_anchor(name, meridian)
 
     if ids.get("framework"):
         for fid, doc, section in session.execute(
                 select(FrameworkChunk.id, FrameworkChunk.doc, FrameworkChunk.section)
                 .where(FrameworkChunk.id.in_(ids["framework"]))):
             titles[("framework", fid)] = "｜".join(p for p in (doc, section) if p)
-            anchors[("framework", fid)] = _anchor_join(doc, section)
+            anchors[("framework", fid)] = anchor_mod.framework_anchor(doc, section)
 
     out = []
     for h in hits:

@@ -10,15 +10,19 @@ def create_app() -> FastAPI:
 
     from app.api import acupoints as acupoints_api
     from app.api import cases as cases_api
+    from app.api import evidence as evidence_api
     from app.api import formulas as formulas_api
     from app.api import herbs as herbs_api
     from app.api import search as search_api
+    from app.api import tools as tools_api
 
     app.include_router(search_api.router)
     app.include_router(formulas_api.router)
     app.include_router(herbs_api.router)
     app.include_router(acupoints_api.router)
     app.include_router(cases_api.router)
+    app.include_router(evidence_api.router)
+    app.include_router(tools_api.router)
 
     @app.get("/healthz")
     def healthz():

@@ -238,11 +238,24 @@
 - `POST /api/tools/dose-convert`：`{herb, dose}` → `{g, dose_state, trace}`，
   直接调 `app.etl.dose.convert`，**不在 API 重算**（PRD §5.4）。
 
-- [ ] **Step 1: 写失败测试**（`evidence:<id>` 全文；`formula:<id>` 含古制留痕；
+- [x] **Step 1: 写失败测试**（`evidence:<id>` 全文；`formula:<id>` 含古制留痕；
       非法 ref_type→400；不存在→404；`半夏 半斤`→60/exact；`大枣 十二枚`→count_only；
       `甘草 二分`→absent）
-- [ ] **Step 2: 实现 + 注册**
-- [ ] **Step 3: 与 PRD 附录 B 的六个实测样例逐一对照**
+- [x] **Step 2: 实现 + 注册**
+- [x] **Step 3: 与 PRD 附录 B 的六个实测样例逐一对照**
+
+**验收（已完成，2026-10-30）**：16 个用例全绿；全量 246 passed + 1 xfailed。实测：
+
+- 附录 B 六例逐一吻合：半夏半斤 60/exact、桂枝三两 45/exact、泽泻二升 100/approx、
+  附子一枚 15/approx、大枣十二枚 null/count_only、甘草二分 null/absent。
+  `trace` 原样透传脚本（含「半斤 → 0.5斤×120g=60.0g」整句），API 不改写。
+- `formula:<id>` 的 `text` 不截断（桂枝汤 > 200 字符），含每个 variant 的 `raw_composition`、
+  药味克数/五态、以及 4 条 evidence 原文；`fields` 另给结构化版本。
+- 锚点抽到 `app/search/anchors.py`，检索命中与回溯接口共用同一套规则；已加测试断言
+  `POST /api/search` 的桂枝汤 anchor 与 `GET /api/evidence/formula:<id>` 完全一致。
+- 无出处且无 variant 的方名（实测存在）anchor 落 `方名候选#<name>`，不伪装成文件路径。
+- `framework:<id>` 返回该小节全文与 `doc/section/chunk_order`。
+- 未知 ref_type / 缺冒号 / 非数字 id → 400；实体不存在 → 404。
 
 ---
 
