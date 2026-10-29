@@ -151,11 +151,12 @@
 **边界**：索引未构建 → 409 `{"detail": {"code": "index_not_ready"}}`；模型版本不符 → 503
 `{"detail": {"code": "embedding_mismatch", ...}}`；空 query → 422；未知 kind → 422。
 
-- [ ] **Step 1: 写失败测试**（200 结构、kind/section 过滤、top 上限、409/503/422）
-- [ ] **Step 2: 实现 `api/schemas.py` + `api/search.py`，在 `create_app` 注册**
-- [ ] **Step 3: 用 `dependency_overrides` 跑真实语料，核对锚点可读**
+- [x] **Step 1: 写失败测试**（200 结构、kind/section 过滤、top 上限、409/503/422）
+- [x] **Step 2: 实现 `api/schemas.py` + `api/search.py`，在 `create_app` 注册**
+- [x] **Step 3: 用 `dependency_overrides` 跑真实语料，核对锚点可读**
 
-**验收**：契约稳定；错误码与 `detail.code` 可被前端分支消费。
+**验收（已完成，2026-10-29）**：6 个 API 用例全绿；409/503/422 的 `detail.code` 分别为
+`index_not_ready` / `embedding_mismatch` / FastAPI 校验错误。
 
 ---
 
