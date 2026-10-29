@@ -1356,7 +1356,50 @@ PairingResult(pairs, only_ancient: list[str], only_gram: list[str])
 
 ---
 
-## Task 12–16：M1 后半段（**待细化**，2026-10-28 登记）
+## Task 12: 幂等入库（loaders.py）
+
+**Files:** `backend/app/etl/loaders.py`、`backend/tests/db/test_loaders_idempotency.py`；
+`backend/app/db/models.py` 补自然键唯一约束。
+
+**幂等必须由数据库唯一约束 + `ON CONFLICT DO UPDATE` 保证**，不是「先 select 再 insert」：
+后者在并发 reindex 下有竞态，且会让「跑两次计数不变」这条判据变成偶然成立。
+
+**自然键（决定约束形态）**：
+
+| 表 | 自然键 | 冲突动作 |
+|---|---|---|
+| `herb` | `name` | 更新（alias/性味可能因词表改进而变） |
+| `formula` | `canonical_name` | 更新 status/anchor，**不降级** confirmed→candidate |
+| `formula_alias` | `(name, doc)` | 跳过 |
+| `formula_dose_variant` | `(formula_id, source_doc, source_row_no)` | 更新 raw_composition |
+| `formula_item` | `(variant_id, herb_text, dose_text, ordinal)` | 更新 herb_id/dose_* |
+  ⚠️ 自然键**必须含 `ordinal`**：D10 要求合方/拼接型克数版里同名药味重复保留（实测 #148 薤白×2），
+不加序号则唯一约束会禁掉那些必须存在的行（实现时踩过，报错为同命令内重复键）。
+| `formula_evidence` | `(source_doc, source_row_no, formula_name)` | 更新原文/六经/病段 |
+| `formula_component` | `(pair_formula_id, component_formula_id, ordinal)` | 跳过 |
+| `formula_variant_pair` | `(formula_id, variant_a, variant_b)` | 更新 diff/score |
+| `pending_formula_name` | `(raw_name, doc, source_row_no)` | **不覆盖人工判定**（decision/decided_by 保留） |
+| `case` | `no` | 更新 |
+| `acupoint` | `name` | 更新 meridian/roles |
+| `framework_chunk` | `(doc, chunk_order)` | 更新 content |
+
+**三条语义规则**：
+1. `pending_formula_name` 的 `decision/decided_by/decided_at` 是**人工资产**，重跑 ETL 不得覆盖；
+   只允许更新 `confidence/suggested_parent/evidence_text`。
+2. `formula.status` 只进不退：已 `confirmed` 的方不因某轮抽取置信度低而回到 `candidate`。
+3. 未归一药味写 `herb_id=NULL` 并保留 `herb_text`（噪声 token 由调用方在入库前剔除，
+   loaders 不再自行判断——判据只有 `herb_vocab` 一处）。
+4. `herb.alias` 数组顺序稳定（排序后写入），否则每轮 reindex 都产生一次无意义 UPDATE。
+
+- [x] **Step 1**: 写失败测试（跑两次各表计数不变；人工判定不被覆盖；status 不降级；herb_id 悬空可查）
+- [x] **Step 2**: 跑红
+- [x] **Step 3**: 补 models 唯一约束；实现 `loaders.py`
+- [x] **Step 4**: 真实语料整库入库 + 二次入库回归（各表行数一致、无重复自然键）
+- [x] **Step 5**: 提交
+
+---
+
+## Task 13–16：M1 后半段（**待细化**，2026-10-28 登记）
 
 原计划到 Task 7 就断了，而 File Structure 声明的 8 个模块一个任务都没有。
 以下按「先修 Task 1-7、后半段边做边补」的决策登记为待办；**每个任务开工前必须先补齐 5 步式分解**，

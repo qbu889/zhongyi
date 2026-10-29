@@ -46,6 +46,7 @@ class FormulaComponent(Base):
     """合方的成分边（D9）。一个 pair 恰有两个成分；成分自身可以是 candidate。"""
 
     __tablename__ = "formula_component"
+    __table_args__ = (UniqueConstraint("pair_formula_id", "component_formula_id", "ordinal"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     pair_formula_id: Mapped[int] = mapped_column(ForeignKey("formula.id"), index=True)
@@ -66,6 +67,7 @@ class FormulaAlias(Base):
 
 class FormulaDoseVariant(Base):
     __tablename__ = "formula_dose_variant"
+    __table_args__ = (UniqueConstraint("formula_id", "source_doc", "source_row_no"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     formula_id: Mapped[int] = mapped_column(ForeignKey("formula.id"), index=True)
@@ -80,9 +82,11 @@ class FormulaDoseVariant(Base):
 
 class FormulaItem(Base):
     __tablename__ = "formula_item"
+    __table_args__ = (UniqueConstraint("variant_id", "herb_text", "dose_text", "ordinal"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     variant_id: Mapped[int] = mapped_column(ForeignKey("formula_dose_variant.id"), index=True)
+    ordinal: Mapped[int] = mapped_column(Integer, default=1)   # 原文顺序：同名药味允许重复（D10）
     herb_id: Mapped[int | None] = mapped_column(ForeignKey("herb.id"))   # 空 = 归一未命中，进 FR-13 ⑤
     herb_text: Mapped[str] = mapped_column(Text)
     dose_text: Mapped[str | None] = mapped_column(Text)
@@ -94,6 +98,7 @@ class FormulaItem(Base):
 
 class FormulaEvidence(Base):
     __tablename__ = "formula_evidence"
+    __table_args__ = (UniqueConstraint("source_doc", "source_row_no", "formula_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     formula_id: Mapped[int] = mapped_column(ForeignKey("formula.id"), index=True)
@@ -108,6 +113,7 @@ class FormulaEvidence(Base):
 
 class FormulaVariantPair(Base):
     __tablename__ = "formula_variant_pair"
+    __table_args__ = (UniqueConstraint("formula_id", "variant_a", "variant_b"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     formula_id: Mapped[int] = mapped_column(ForeignKey("formula.id"), index=True)
@@ -143,6 +149,7 @@ class Herb(Base):
 
 class Acupoint(Base):
     __tablename__ = "acupoint"
+    __table_args__ = (UniqueConstraint("name", "meridian"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(Text)
@@ -154,6 +161,7 @@ class Acupoint(Base):
 
 class AcupointSymptom(Base):
     __tablename__ = "acupoint_symptom"
+    __table_args__ = (UniqueConstraint("acupoint_id", "symptom", "source_doc"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     acupoint_id: Mapped[int] = mapped_column(ForeignKey("acupoint.id"), index=True)
@@ -177,6 +185,7 @@ class Case(Base):
 
 class FrameworkChunk(Base):
     __tablename__ = "framework_chunk"
+    __table_args__ = (UniqueConstraint("doc", "chunk_order"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     doc: Mapped[str] = mapped_column(Text)
@@ -199,6 +208,7 @@ class PendingFormulaName(Base):
     """§5.6 D7 的落点：抽不出/低置信/一行多方的方名在此排队，人工判定后才进 formula。"""
 
     __tablename__ = "pending_formula_name"
+    __table_args__ = (UniqueConstraint("raw_name", "doc", "source_row_no"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     raw_name: Mapped[str] = mapped_column(Text)

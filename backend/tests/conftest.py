@@ -31,3 +31,55 @@ def db_session(engine):
         session.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture(scope="module")
+def corpus():
+    """真实语料的解析结果（纯函数，不落库）。模块级复用，一次解析约百毫秒。"""
+    from app.etl import (
+        herb_vocab,
+        parse_acupoints,
+        parse_cases,
+        parse_classics,
+        parse_framework,
+        parse_formulas,
+        parse_herbs,
+        verify,
+    )
+
+    D = settings.distilled_dir
+    herb_text = (D / "04-神农本草经" / "中药库.md").read_text(encoding="utf-8")
+    taste_text = (D / "04-神农本草经" / "药物按味归类.md").read_text(encoding="utf-8")
+    herbs = parse_herbs.merge(parse_herbs.parse_zhongyao(herb_text),
+                              parse_herbs.parse_taste_groups(taste_text))
+    vocab = herb_vocab.build(herbs, parse_herbs.parse_alias_header(
+        herb_text.split("## 肝经")[0]))
+    ancient = parse_formulas.parse_ancient(
+        (D / "方剂库-经方组成.md").read_text(encoding="utf-8"))
+    classic = parse_classics.parse_classic(
+        (D / "方剂库-经典配方.md").read_text(encoding="utf-8"))
+    evidence = []
+    for rel in ("02-伤寒论/伤寒六经方库.md", "03-金匮/金匮方剂库.md"):
+        evidence += parse_classics.parse_evidence((D / rel).read_text(encoding="utf-8"), rel)
+
+    framework = []
+    for rel in ("01-内经/核心理论文档.md", "02-伤寒论/六经辨证框架.md",
+                "02-伤寒论/临证诊断与治则补充.md", "06-医案/临床问答对.md"):
+        framework += parse_framework.parse_framework((D / rel).read_text(encoding="utf-8"), rel)
+
+    acupoint_text = (D / "05-针灸" / "十二经穴位库.md").read_text(encoding="utf-8")
+    symptom_text = (D / "05-针灸" / "针灸治症取穴.md").read_text(encoding="utf-8")
+    return {
+        "herbs": herbs,
+        "vocab": vocab,
+        "ancient": ancient,
+        "classic": classic,
+        "evidence": evidence,
+        "framework": framework,
+        "cases": parse_cases.parse_clinical_cases(
+            (D / "06-医案" / "临床问答对.md").read_text(encoding="utf-8")),
+        "acupoints": parse_acupoints.parse_acupoints(acupoint_text),
+        "acupoint_symptoms": parse_acupoints.parse_symptoms(symptom_text),
+        "pairs": verify.build_variant_pairs(ancient, classic, vocab=vocab),
+    }
+
