@@ -20,6 +20,7 @@ _SECTION = re.compile(r"^###\s+(.+?)\s*$")
 class ClassicVariant:
     no: int | None
     names: list[str] = field(default_factory=list)        # 一行多方时是多个候选
+    name_candidates: list[tuple[str, str]] = field(default_factory=list)  # (原文写法, 规范名)
     kind: str = "single"                                  # single | pair（D9）
     components: list[str] = field(default_factory=list)    # pair 的两个成分方名
     herbs: list[tuple[str, float]] = field(default_factory=list)  # (原文药名, 克数)，顺序即语料顺序
@@ -59,7 +60,9 @@ def parse_classic(text: str) -> list[ClassicVariant]:
             continue
         order += 1
         no = int(cells[0]) if cells[0].isdigit() else None
-        names = [c.name for c in identity.extract_formula_name(cells[1])]
+        extracted = identity.extract_formula_name(cells[1])
+        names = [c.name for c in extracted]
+        candidates = [(c.raw.strip(), c.name) for c in extracted]
         herbs = []
         for seg in cells[2].split(","):
             m = _HERB_GRAM.match(norm(seg))
@@ -77,7 +80,8 @@ def parse_classic(text: str) -> list[ClassicVariant]:
             pending = "multi_name_row"
 
         out.append(ClassicVariant(
-            no=no, names=names, kind="pair" if components else "single",
+            no=no, names=names, name_candidates=candidates,
+            kind="pair" if components else "single",
             components=components, herbs=herbs, remark=norm(cells[3]),
             pending_reason=pending, source_row_no=order, raw_name_field=cells[1],
         ))

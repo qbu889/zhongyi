@@ -1372,7 +1372,7 @@ PairingResult(pairs, only_ancient: list[str], only_gram: list[str])
 |---|---|---|
 | `herb` | `name` | 更新（alias/性味可能因词表改进而变） |
 | `formula` | `canonical_name` | 更新 status/anchor，**不降级** confirmed→candidate |
-| `formula_alias` | `(name, doc)` | 跳过 |
+| `formula_alias` | `(formula_id, name, doc)` | M1 未写入（本表曾登记「跳过」）；M2 Task 1 补录 50 行，见 `2026-10-29-m2-retrieval-and-library-api.md` |
 | `formula_dose_variant` | `(formula_id, source_doc, source_row_no)` | 更新 raw_composition |
 | `formula_item` | `(variant_id, herb_text, dose_text, ordinal)` | 更新 herb_id/dose_* |
   ⚠️ 自然键**必须含 `ordinal`**：D10 要求合方/拼接型克数版里同名药味重复保留（实测 #148 薤白×2），

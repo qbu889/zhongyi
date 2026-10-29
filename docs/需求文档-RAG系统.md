@@ -233,6 +233,8 @@ formula(id, canonical_name, anchor /*override|jingfang_zucheng|candidate*/,
         kind /*single|modified|pair*/, note)
 formula_component(pair_formula_id, component_formula_id, ordinal)  -- D9：合方的两个成分边
 formula_alias(formula_id, name, doc, kind /*古名|现代名|汤方尾巴|加减写法|一行多方拆分*/)
+-- 自然键 (formula_id, name, doc)：`加减写法` 行的 name 是**母方名**，27 个桂枝汤加减方会写同名，
+-- 键里不含 formula_id 只能留下一条。M2 实测补录 50 行（36 谱系 + 14 汤方尾巴）。
 
 formula_dose_variant(id, formula_id, source_doc /*经方组成|经典配方|override*/,
                      dose_basis /*ancient|gram*/, ordinal, source_row_no,

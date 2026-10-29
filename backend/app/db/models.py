@@ -56,7 +56,9 @@ class FormulaComponent(Base):
 
 class FormulaAlias(Base):
     __tablename__ = "formula_alias"
-    __table_args__ = (UniqueConstraint("name", "doc"),)
+    # 自然键必须含 formula_id：`加减写法` 行存的是母方名，实测 27 个桂枝汤加减方
+    # 会写出 27 行 name="桂枝汤"，(name, doc) 唯一键只能留下一条。
+    __table_args__ = (UniqueConstraint("formula_id", "name", "doc"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     formula_id: Mapped[int] = mapped_column(ForeignKey("formula.id"), index=True)

@@ -114,6 +114,16 @@ def load_corpus(session: Session, corpus) -> LoadSummary:
     formula_id = _key_map(session, models.Formula, ["canonical_name"])
     summary.counts["formula"] = len(formula_id)
 
+    # ---- formula_alias（M2 补录：加减方谱系 + 汤方尾巴）----
+    alias_rows = [{"formula_id": formula_id[r.formula_name], "name": r.name,
+                   "doc": r.doc, "kind": r.kind}
+                  for r in corpus.get("aliases", []) if r.formula_name in formula_id]
+    orphan_aliases = sum(1 for r in corpus.get("aliases", []) if r.formula_name not in formula_id)
+    if orphan_aliases:
+        summary.skipped["alias_orphan"] = orphan_aliases
+    _insert(session, models.FormulaAlias, alias_rows, ["formula_id", "name", "doc"])
+    summary.counts["alias"] = len(alias_rows)
+
     # ---- variant + item ----
     variant_rows, item_rows = [], []
     for a in corpus["ancient"]:

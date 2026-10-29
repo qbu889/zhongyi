@@ -23,6 +23,7 @@ from app.db.models import IndexVersion
 from app.embed import chunk as chunk_mod
 from app.embed import indexer
 from app.etl import (
+    aliases,
     herb_vocab,
     loaders,
     parse_acupoints,
@@ -77,6 +78,21 @@ def build_corpus() -> dict[str, Any]:
     evidence = [e for doc in _EVIDENCE_DOCS for e in parse_classics.parse_evidence(_read(doc), doc)]
     framework = [c for doc in _FRAMEWORK_DOCS
                  for c in parse_framework.parse_framework(_read(doc), doc)]
+    cases = parse_cases.parse_clinical_cases(_read("06-医案/临床问答对.md"))
+
+    formula_names = ({a.name for a in ancient}
+                     | {n for c in classic for n in c.names + c.components}
+                     | {e.formula_name for e in evidence}
+                     | {n for row in cases for n in row.formula_names})
+    # 母方必须有剂量 variant 才认谱系：实测 39 条结构匹配里，柴胡汤（3 条）与白通汤
+    # 只出现在方证出处/方名里、没有任何组成，指过去等于给用户一个空方。
+    parent_pool = ({a.name for a in ancient}
+                   | {c.names[0] for c in classic if len(c.names) == 1 and c.herbs}
+                   | {c.names[0] for c in classic if c.kind == "pair" and c.herbs})
+    # 合方串（稠朴麻黄汤方+泽漆汤方）也是单名字段，但它不是「本方写法」→ 排除
+    tail_candidates = [(raw, canonical) for c in classic
+                       if c.kind == "single" and len(c.names) == 1
+                       for raw, canonical in c.name_candidates]
 
     return {
         "herbs": herbs,
@@ -85,10 +101,12 @@ def build_corpus() -> dict[str, Any]:
         "classic": classic,
         "evidence": evidence,
         "framework": framework,
-        "cases": parse_cases.parse_clinical_cases(_read("06-医案/临床问答对.md")),
+        "cases": cases,
         "acupoints": parse_acupoints.parse_acupoints(_read("05-针灸/十二经穴位库.md")),
         "acupoint_symptoms": parse_acupoints.parse_symptoms(_read("05-针灸/针灸治症取穴.md")),
         "pairs": verify.build_variant_pairs(ancient, classic, vocab=vocab),
+        "aliases": aliases.derive(formula_names=formula_names, parent_pool=parent_pool,
+                                  classic_candidates=tail_candidates),
     }
 
 
