@@ -26,18 +26,21 @@
 - `backend/app/search/__init__.py`
 - `backend/app/search/query.py` —— 查询规范化、分词/字面重叠、纯排序合并函数
 - `backend/app/search/retriever.py` —— 精确召回 + 向量召回 + 字面召回 + 标题/锚点装配
+- `backend/app/search/anchors.py` —— 锚点统一构造（检索与回溯接口共用）
 - `backend/app/db/schema.py` —— `ensure_search_indexes(engine)`（HNSW cosine）
 - `backend/app/api/__init__.py`
 - `backend/app/api/schemas.py` —— 响应模型
 - `backend/app/api/search.py` —— `POST /api/search`
 - `backend/app/api/formulas.py` —— `/api/formulas`、`/api/formulas/{id}`
-- `backend/app/api/library.py` —— `/api/herbs`、`/api/acupoints`、`/api/cases`
+- `backend/app/api/herbs.py` —— `/api/herbs`、`/api/herbs/{id}`
+- `backend/app/api/acupoints.py` —— `/api/acupoints`、`/api/acupoints/{id}`
+- `backend/app/api/cases.py` —— `/api/cases`、`/api/cases/{id}`
 - `backend/app/api/evidence.py` —— `GET /api/evidence/{ref}`
 - `backend/app/api/tools.py` —— `POST /api/tools/dose-convert`
 - `backend/app/etl/aliases.py` —— 别名补录（纯函数，供 loaders/corpus 调用）
 - 测试：`backend/tests/unit/test_search_ranking.py`、`backend/tests/db/test_alias_backfill.py`、
   `tests/db/test_search.py`、`tests/db/test_formula_api.py`、`tests/db/test_library_api.py`、
-  `tests/db/test_evidence_api.py`、`tests/db/test_dose_api.py`、`tests/db/test_search_acceptance.py`
+  `tests/db/test_evidence_dose_api.py`、`tests/db/test_search_acceptance.py`
 
 ---
 
@@ -67,7 +70,7 @@
   - `AliasRow(formula_name, name, doc, kind)`
   - `parent_pool`: 有剂量 variant 的方名集合
   - `classic_candidates`: `[(raw, normalized)]` 单名行原始/规范写法
-- `loaders.load_corpus` 新增写入 `formula_alias`，冲突键 `(name, doc)` → `DO NOTHING`。
+- `loaders.load_corpus` 新增写入 `formula_alias`，冲突键 `(formula_id, name, doc)` → `DO NOTHING`。
 
 - [x] **Step 1: 写失败测试**（36 / 14；桂枝加葛根汤←桂枝汤；柴胡加芒硝汤无谱系；`汤方尾巴` 14 条）
 - [x] **Step 2: 实现 `aliases.derive`**
@@ -268,13 +271,21 @@ PIPELINE §6 两条样例，按**可在当前环境验证的部分**拆开：
 | ①「咳嗽气喘痰白不能平躺」 | 药 Top-5 含 杏仁/桑白皮（以实测为准）；医案命中问11 | 语义质量需 BGE-M3 |
 | ②「发烧怕冷头痛颈项强急脉浮」 | 穴 风池/后溪/天柱（精确/字面）；药 麻黄 | 六经脉象语义需 BGE-M3 |
 
-- [ ] **Step 1: 写 `test_search_acceptance.py`，只断言实测通过的部分**
-- [ ] **Step 2: 语义验收标记 `@pytest.mark.integration` + `ZY_ALLOW_INTEGRATION=1`，
+- [x] **Step 1: 写 `test_search_acceptance.py`，只断言实测通过的部分**
+- [x] **Step 2: 语义验收标记 `@pytest.mark.integration` + `ZY_ALLOW_INTEGRATION=1`，
       未安装 sentence-transformers 时 skip 并打印原因**
-- [ ] **Step 3: 在 PRD §8 M2 行与 §10 E3 写明：M2 的「命中达标」目前只到结构/精确层，
+- [x] **Step 3: 在 PRD §8 M2 行与 §10 E3 写明：M2 的「命中达标」目前只到结构/精确层，
       语义层待 E3 评测集与真实 embedding**
 
-**验收**：测试全绿；skip 原因可读；不把 HashingEmbedder 的结果冒充语义检索质量。
+**验收（已完成，2026-10-30）**：5 条结构层用例通过，1 条集成用例默认 deselected
+（`pytest.ini` 的 `-m "not integration"`；显式 `-m integration` 且未设环境变量时会 skip 并给出原因）。
+实测：
+
+- ①「咳嗽气喘痰白不能平躺」：总榜第 1 是医案问11；药 Top-10 里 杏核仁 第 2、桑根白皮 第 7。
+- ②「发烧怕冷头痛颈项强急脉浮」：穴 Top-5 = 百会/风池/天柱/后溪（后三者满足 PIPELINE 期望）。
+- 现代名精确通道：`杏仁`→杏核仁、`桑白皮`→桑根白皮（`match=exact`）。
+- **词袋向量的边界已写成反证用例**：② 的药 Top-10 没有麻黄——PIPELINE 期望的语义命中
+  被显式标为未达成，交给 BGE-M3 集成用例（断言 ①② 的语义期望），不用词袋结果凑验收。
 
 ---
 
