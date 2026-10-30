@@ -1,7 +1,6 @@
 """编排入口：意图 → 检索 → 门禁 → 构建 → prose → 落库。"""
 
 import json
-import re
 
 from sqlalchemy import select
 
@@ -19,7 +18,6 @@ _KINDS = {
     intent_mod.Intent.composite: {"formula", "herb", "acupoint", "framework", "case", "evidence"},
 }
 _ENTITY_KIND = {intent_mod.Intent.formula: "formula", intent_mod.Intent.herb: "herb"}
-_CASE_NO_DIGITS = re.compile(r"问\s*(\d+)")
 
 
 def _refusal(hits) -> Answer:
@@ -30,16 +28,20 @@ def _refusal(hits) -> Answer:
 
 
 def _case_by_number(session, question: str):
-    match = _CASE_NO_DIGITS.search(question)
-    if not match:
+    no = intent_mod.case_no(question)
+    if no is None:
         return None
-    return session.scalar(select(Case).where(Case.no == f"问{match.group(1)}"))
+    return session.scalar(select(Case).where(Case.no == no))
 
 
 def _answer_struct(session, question: str, kind: intent_mod.Intent, embedder) -> Answer:
     if kind == intent_mod.Intent.case:
         case = _case_by_number(session, question)
-        return builders.build_case(session, case.id) if case else _refusal([])
+        if case is None:
+            hits = retriever.search(session, question, kinds={"case"}, top=3,
+                                    embedder=embedder).hits
+            return _refusal(hits)
+        return builders.build_case(session, case.id)
 
     if kind == intent_mod.Intent.syndrome:
         followup = builders.build_followup(question)

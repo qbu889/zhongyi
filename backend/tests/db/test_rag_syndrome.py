@@ -27,6 +27,25 @@ def test_composite_has_syndrome_formula_and_acupoint_sections(db_session):
     assert "辨证" in titles and "组成" in titles and "取穴" in titles
 
 
+def test_syndrome_case_doses_flag_incompleteness(db_session):
+    run_reindex(db_session)
+    q = "咳嗽气喘痰白不能平躺"
+    ans = builders.build_syndrome(db_session, q, _hits(db_session, q, {"framework", "evidence", "formula"}),
+                                  _hits(db_session, q, {"case"}))
+    assert ans.dose_complete is False
+    assert any(s.title == "提示" and "剂量不完全可执行" in s.lines[0] for s in ans.sections)
+
+
+def test_composite_propagates_formula_dose_completeness(db_session):
+    run_reindex(db_session)
+    q = "桂枝汤配合风池穴怎么用"
+    ans = builders.build_composite(db_session, q, _hits(db_session, q, {"formula", "framework", "evidence"}),
+                                   _hits(db_session, q, {"case"}))
+    # 桂枝汤含「大枣 十二枚」(count_only)，组成段必须带上不可执行提示
+    assert ans.dose_complete is False
+    assert any(s.title == "提示" and "剂量不完全可执行" in s.lines[0] for s in ans.sections)
+
+
 def test_vague_complaint_asks_instead_of_guessing():
     assert builders.build_followup("我不舒服")
     assert builders.build_followup("有点难受，怎么办")

@@ -15,6 +15,10 @@ from app.search import anchors as anchor_mod
 from app.search import query as qmod
 from app.search.query import MATCH_EXACT, Hit
 
+_INCOMPLETE_HINT = "本方剂量不完全可执行（含非 exact 药味）"
+_DOSE_STATE_LABELS = {"approx": "近似", "count_only": "仅计数",
+                      "absent": "未记载", "unknown_unit": "未换算"}
+
 
 def compose_dose_lines(session, formula_id: int) -> tuple[list[DoseLine], bool | None]:
     variants = list(session.scalars(
@@ -38,9 +42,14 @@ def compose_dose_lines(session, formula_id: int) -> tuple[list[DoseLine], bool |
 
 def format_dose(line: DoseLine) -> str:
     if line.g is not None:
-        trace = f"（{line.ancient}）" if line.ancient else ""
+        # 近似值不得与精确值同样式呈现（NFR-4）：古制留痕后必须带「近似」。
+        if line.dose_state == "approx":
+            trace = f"（{line.ancient}，近似）" if line.ancient else "（近似）"
+        else:
+            trace = f"（{line.ancient}）" if line.ancient else ""
         return f"{line.herb} {line.g:g}g{trace}"
-    return f"{line.herb} {line.ancient or '剂量未记载'}（{line.dose_state}）"
+    label = _DOSE_STATE_LABELS.get(line.dose_state, line.dose_state)
+    return f"{line.herb} {line.ancient or '剂量未记载'}（{label}）"
 
 
 def _top_score(*groups) -> float | None:
@@ -71,7 +80,7 @@ def build_formula(session, formula_id: int) -> Answer:
     doses, complete = compose_dose_lines(session, formula_id)
     sections = [Section(title="组成", lines=[format_dose(d) for d in doses] or ["本方无组成记录"])]
     if complete is False:
-        sections.append(Section(title="提示", lines=["本方剂量不完全可执行（含非 exact 药味）"]))
+        sections.append(Section(title="提示", lines=[_INCOMPLETE_HINT]))
     return Answer(intent="B", headline=formula.canonical_name, sections=sections,
                   citations=_formula_citations(session, formula), dose_complete=complete,
                   disclaimer=DISCLAIMER)
@@ -176,16 +185,22 @@ def build_case(session, case_id: int) -> Answer:
         Section(title="要诀", lines=[case.tips or "本条无要诀"]),
     ]
     doses: list[str] = []
+    flags: list[bool] = []
     for fid in case.treatment_formula_ids or []:
-        lines, _ = compose_dose_lines(session, fid)
+        lines, complete = compose_dose_lines(session, fid)
         doses.extend(format_dose(d) for d in lines)
+        if complete is not None:
+            flags.append(complete)
     if doses:
         sections.append(Section(title="剂量", lines=doses))
+    dose_complete = all(flags) if flags else None
+    if dose_complete is False:
+        sections.append(Section(title="提示", lines=[_INCOMPLETE_HINT]))
     return Answer(intent="E", headline=f"{case.no}（{case.category or '未分类'}）",
                   sections=sections,
                   citations=[Citation(ref_type="case", ref_id=case.id, title=case.no,
                                       anchor=anchor_mod.case_anchor(case.no))],
-                  disclaimer=DISCLAIMER)
+                  dose_complete=dose_complete, disclaimer=DISCLAIMER)
 
 
 _VAGUE_WORDS = re.compile(
@@ -204,18 +219,21 @@ def build_followup(query: str) -> list[str]:
             "睡眠、胃口、精神怎样？起病多久了？"]
 
 
-def _treatment_section(session, formula_ids: list[int]) -> Section | None:
-    names, doses = [], []
+def _treatment_section(session, formula_ids: list[int]) -> tuple[Section | None, bool | None]:
+    names, doses, flags = [], [], []
     for fid in formula_ids:
         formula = session.get(Formula, fid)
         if formula is None:
             continue
         names.append(formula.canonical_name)
-        lines, _ = compose_dose_lines(session, fid)
+        lines, complete = compose_dose_lines(session, fid)
         doses.extend(format_dose(d) for d in lines)
+        if complete is not None:
+            flags.append(complete)
     if not names:
-        return None
-    return Section(title="定方", lines=[f"治：{'、'.join(names)}"] + doses)
+        return None, None
+    section = Section(title="定方", lines=[f"治：{'、'.join(names)}"] + doses)
+    return section, (all(flags) if flags else None)
 
 
 def build_syndrome(session, query: str, hits, case_hits) -> Answer:
@@ -224,9 +242,11 @@ def build_syndrome(session, query: str, hits, case_hits) -> Answer:
                         or ["本地库未检索到对应条文"])]
     citations = [citation_from_hit(h) for h in hits[:3]]
     treatment = None
+    dose_complete = None
     if case_hit is not None:
         case = session.get(Case, case_hit.ref_id)
-        treatment = _treatment_section(session, list(case.treatment_formula_ids or []))
+        treatment, dose_complete = _treatment_section(
+            session, list(case.treatment_formula_ids or []))
         citations.insert(0, Citation(ref_type="case", ref_id=case.id, title=case.no,
                                      anchor=anchor_mod.case_anchor(case.no)))
         if case.tips:
@@ -236,13 +256,16 @@ def build_syndrome(session, query: str, hits, case_hits) -> Answer:
         formula_hit = next((h for h in hits if h.ref_type == "formula"
                             and h.match == MATCH_EXACT), None)
         if formula_hit is not None:
-            treatment = _treatment_section(session, [formula_hit.ref_id])
+            treatment, dose_complete = _treatment_section(session, [formula_hit.ref_id])
     if treatment is None:
         # 语料事实：部分医案只写方名不给结构化 formula_id 时不造方
         treatment = Section(title="定方", lines=["本条未落到结构化方剂"])
     sections.insert(1, treatment)
+    if dose_complete is False:
+        sections.append(Section(title="提示", lines=[_INCOMPLETE_HINT]))
     return Answer(intent="A", headline=query, sections=sections, citations=citations,
-                  disclaimer=DISCLAIMER, top_score=_top_score(hits, case_hits))
+                  dose_complete=dose_complete, disclaimer=DISCLAIMER,
+                  top_score=_top_score(hits, case_hits))
 
 
 def build_composite(session, query: str, hits, case_hits, found=None) -> Answer:
@@ -252,10 +275,13 @@ def build_composite(session, query: str, hits, case_hits, found=None) -> Answer:
     sections = [Section(title="辨证", lines=syndrome.sections[0].lines)]
     citations = list(syndrome.citations)
 
+    dose_complete = None
+    # 辨证链的定方剂量不在组合段展示，只有「组成」里点名的方参与 dose_complete。
     if "formula" in found:
         built = build_formula(session, found["formula"][0])
         sections.append(Section(title="组成", lines=built.sections[0].lines))
         citations.extend(built.citations)
+        dose_complete = built.dose_complete
 
     if "acupoint" in found:
         point = session.get(Acupoint, found["acupoint"][0])
@@ -269,5 +295,8 @@ def build_composite(session, query: str, hits, case_hits, found=None) -> Answer:
         sections.append(Section(title="取穴", lines=acupoints.sections[0].lines))
         citations.extend(acupoints.citations)
 
+    if dose_complete is False:
+        sections.append(Section(title="提示", lines=[_INCOMPLETE_HINT]))
     return Answer(intent="F", headline=query, sections=sections, citations=citations,
-                  disclaimer=DISCLAIMER, top_score=_top_score(hits, case_hits))
+                  dose_complete=dose_complete, disclaimer=DISCLAIMER,
+                  top_score=_top_score(hits, case_hits))

@@ -58,7 +58,34 @@ def test_formula_with_non_exact_dose_is_marked_incomplete(db_session):
     ans = builders.build_formula(db_session, fid)
     assert ans.dose_complete is False
     body = " ".join(line for s in ans.sections for line in s.lines)
-    assert "猪苓 十八铢(去皮)（unknown_unit）" in body   # 未知单位原样保留，不得造克数
+    assert "猪苓 十八铢(去皮)（未换算）" in body   # 未知单位原样保留，不得造克数
+
+
+def test_format_dose_marks_approx_and_labels_states():
+    from app.rag.schemas import DoseLine
+
+    assert builders.format_dose(
+        DoseLine(herb="附子", g=15.0, ancient="一枚(炮)", dose_state="approx")) \
+        == "附子 15g（一枚(炮)，近似）"
+    assert builders.format_dose(
+        DoseLine(herb="大枣", ancient="十二枚", dose_state="count_only")) \
+        == "大枣 十二枚（仅计数）"
+    assert builders.format_dose(
+        DoseLine(herb="甘草", ancient="分", dose_state="absent")) == "甘草 分（未记载）"
+    assert builders.format_dose(
+        DoseLine(herb="猪苓", ancient="十八铢", dose_state="unknown_unit")) \
+        == "猪苓 十八铢（未换算）"
+
+
+def test_case_marks_incomplete_doses(db_session):
+    run_reindex(db_session)
+    cid = db_session.scalar(select(Case.id).where(Case.no == "问11"))
+    ans = builders.build_case(db_session, cid)
+    body = " ".join(line for s in ans.sections for line in s.lines)
+    assert ans.dose_complete is False
+    assert "半夏 25g（半升，近似）" in body
+    assert "大枣 七枚（仅计数）" in body
+    assert any(s.title == "提示" and "剂量不完全可执行" in s.lines[0] for s in ans.sections)
 
 
 def test_herb_answer_declares_missing_flavor(db_session):

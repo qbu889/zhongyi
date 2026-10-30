@@ -77,6 +77,21 @@ def test_chat_returns_coded_error_when_index_missing(client):
     assert resp.json()["detail"]["code"] == "index_not_ready"
 
 
+def test_incidental_number_after_wen_is_not_a_case_reference(indexed_client):
+    data = indexed_client.post(
+        "/api/chat", json={"question": "请问11岁小孩发烧怎么办"}).json()["answer"]
+    body = " ".join(line for s in data["sections"] for line in s["lines"])
+    assert data["intent"] != "E"
+    assert "服西药多年不愈" not in body      # 不得落到问11的主诉
+
+
+def test_missing_case_number_refuses_with_case_candidates(indexed_client):
+    data = indexed_client.post("/api/chat", json={"question": "问999"}).json()["answer"]
+    assert data["intent"] == "E" and data["status"] == "refused"
+    assert len(data["candidates"]) <= 3
+    assert all(c["ref_type"] == "case" for c in data["candidates"])
+
+
 def test_sse_stream_emits_meta_citations_tokens_done(indexed_client):
     with indexed_client.stream("POST", "/api/chat/stream", json={"question": "桂枝汤"}) as r:
         assert r.status_code == 200

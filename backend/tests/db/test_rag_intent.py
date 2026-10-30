@@ -1,7 +1,7 @@
 import pytest
 
 from app.admin.reindex import run_reindex
-from app.rag.intent import Intent, classify, mentions
+from app.rag.intent import Intent, case_no, classify, mentions
 
 
 @pytest.fixture
@@ -19,12 +19,24 @@ def indexed(db_session):
     ("风池穴怎么用", Intent.acupoint),             # 裸名 + 「穴」后缀也算穴位
     ("咳嗽气喘按什么穴", Intent.acupoint),
     ("问11", Intent.case),
+    ("问 11", Intent.case),
+    ("问11的医案", Intent.case),
+    ("问999", Intent.case),
+    ("请问11岁小孩发烧怎么办", Intent.syndrome),   # 「请问+数字」不是医案号
+    ("请问3天前发烧怎么办", Intent.syndrome),
     ("咳嗽气喘痰白不能平躺", Intent.syndrome),
     ("太阳病怎么办", Intent.syndrome),          # 太阳也是穴位名，裸名不得抢走六经问句
     ("桂枝汤配合风池穴怎么用", Intent.composite),
 ])
 def test_classify(indexed, query, expected):
     assert classify(indexed, query) == expected
+
+
+def test_case_no_only_anchors_at_query_start():
+    assert case_no("问11") == "问11"
+    assert case_no("问 11的医案") == "问11"
+    assert case_no("请问11岁小孩发烧怎么办") is None
+    assert case_no("请问38度发烧怎么办") is None
 
 
 def test_mentions_picks_longest_name_inside_sentence(indexed):

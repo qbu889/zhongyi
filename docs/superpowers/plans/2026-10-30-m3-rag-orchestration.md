@@ -18,7 +18,7 @@
 - 单测不得下载模型、不得访问网络；真实 LLM 只允许在显式配置 `LLM_API_KEY`（`.env`，pydantic-settings 无前缀）时启用。
 - 管理端仍无鉴权（E2 未定稿），M3 不改鉴权。
 - 所有测试用 `backend/.venv/bin/python -m pytest ...` 运行；integration 用例默认 deselect。
-- 切片/索引不改动；M3 只读已有表，新增会话/日志表由 `Base.metadata.create_all` 建。
+- 切片/索引不改动；M3 只读已有表。新增会话/日志表的建表目前只在测试夹具 `backend/tests/conftest.py` 中执行；生产/开发库初始化路径未提供，留待 M5 部署。
 - 每完成任务即提交；提交信息沿用仓库风格 `feat(m3): …` / `test(m3): …`。
 
 ---
@@ -1495,7 +1495,7 @@ git commit -m "test(m3): PIPELINE §6 验收与拒答/剂量边界"
 
 ---
 
-## 实测记录（2026-10-30，Task 8 收尾）
+## 实测记录（2026-10-30，Task 8 收尾；数字为终审修复后复核）
 
 ### 命令与结果
 
@@ -1503,17 +1503,17 @@ git commit -m "test(m3): PIPELINE §6 验收与拒答/剂量边界"
 
 ```
 $ .venv/bin/python -m pytest tests/db/test_rag_acceptance.py -q
-6 passed, 1 warning in 11.55s
+6 passed, 1 warning in 11.37s
 
 $ .venv/bin/python -m pytest -q
-301 passed, 1 deselected, 1 xfailed, 1 warning in 225.52s (0:03:45)
+313 passed, 1 deselected, 1 xfailed, 1 warning in 274.49s (0:04:34)
 ```
 
-基线 295 passed / 1 deselected / 1 xfailed；本任务只新增 6 条验收用例，既有断言零改动（本轮未发现需要同步的行为变更）。6 条用例首轮即全绿，未改任何编排代码：
+Task 8 收尾时的基线是 295 passed / 1 deselected / 1 xfailed；该任务只新增 6 条验收用例，既有断言零改动，6 条首轮即全绿、未改任何编排代码。终审修复轮（见「终审修复」）再新增 12 条用例（5 条为 `test_classify` 参数化行，另 7 条新用例），并把唯一一处 `unknown_unit` 断言的状态文案改为中文标签，全量因此为 313 passed：
 
 | 用例 | 断言 | 实测 |
 |---|---|---|
-| `test_pipeline_case_1_lands_case_11_with_doses` | answered、含射干麻黄汤、有 case 引用 | 通过：sections 为 问/答/治/要诀/剂量，剂量段 射干 45g（三两）、麻黄 60g（四两）… 三首方合并 |
+| `test_pipeline_case_1_lands_case_11_with_doses` | answered、含射干麻黄汤、有 case 引用 | 通过：走辨证链，sections 为 辨证/定方/提示；定方列出 射干麻黄汤、乌梅丸、厚朴三物汤 及古制剂量（射干 45g（三两）、麻黄 60g（四两）…），因含 approx/count_only 药味追加「提示」段 |
 | `test_case_2_acupoints_are_covered` | 风池/后溪/天柱 全部出现 | 通过 |
 | `test_refusal_is_clean_and_disclaimed` | refused、sections 空、候选 ≤3、免责开头 | 通过 |
 | `test_every_answer_has_server_side_disclaimer` | 5 类问句免责结尾一致 | 通过 |
@@ -1527,7 +1527,7 @@ $ .venv/bin/python -m pytest -q
 | 乳腺癌靶向药有哪些 | refused | A | 3（06-医案/临床问答对.md｜重症/癌症类、问2（重症/癌症类）、02-伤寒论/临证诊断与治则补充.md｜药简力专，敢用毒药） | 0.1739 |
 | 量子针灸能治癌症吗 | refused | D | 3 | 0.2807 |
 
-两者 `sections=[]`、`prose` 为空串、`disclaimer` 以「本回答基于本地蒸馏语料」开头。对照：同轮「咳嗽气喘痰白不能平躺」为 answered，top_score 0.3967，sections 为 辨证/定方。
+两者 `sections=[]`、`prose` 为空串、`disclaimer` 以「本回答基于本地蒸馏语料」开头。对照：同轮「咳嗽气喘痰白不能平躺」为 answered，top_score 0.3967，sections 为 辨证/定方/提示（终审修复后补上「提示」段）。
 
 ### 与计划片段的偏差（以落地代码为准）
 
@@ -1535,15 +1535,26 @@ a. **Task 4**：医案回答实际为 5 段（问/答/治/要诀/剂量）——
 b. **Task 5**：`build_followup` 落地为「剥离虚词/问句/软化词后仍有实质内容则不追问」，替代计划里的整句 `_VAGUE` 正则；后者会把「咳嗽老不好」「头痛不适」这类具体主诉误拦成 `needs_more_info`。
 c. **Task 6**：`POST /api/chat` 把 `IndexNotReady / EmbeddingMismatch / ValueError` 映射为 409（`index_not_ready`）/ 503（`embedding_mismatch`）/ 422（`bad_request`），与 `/api/search` 对齐，并有 `test_chat_returns_coded_error_when_index_missing` 回归。
 
+### 终审修复（2026-10-30）
+
+整分支终审（BASE `3495a23` → HEAD `09293a0`）报出两项阻塞缺陷，本轮一次修完，提交 `fix(m3): 医案号句首锚定与近似剂量诚实标注`（基线 `09293a0`；提交哈希记录在本轮 `final-fix-report.md`——文档与代码同一提交，无法自指自身哈希）：
+
+- **C1 医案号未锚定**：原 `_CASE_NO = re.compile(r"问\s*\d+")` 不锚定句首，任何「问+数字」子串都会路由到医案链——「请问11岁小孩发烧怎么办」曾直接输出问11 的剂量（「麻黄 60g（四两）」）。这正是 Task 1 留下、台账 defer 却始终没写进「已知边界」的问题。现改为 `^问\s*(\d+)(?=$|[\s，,。？?！!：:的号案是])`，判定集中到 `intent.case_no`，`service._case_by_number` 复用它（不再保留第二份正则）；语法合法但不存在的号（「问999」）按医案类拒答，返回至多 3 条真实医案候选。
+- **I1 近似剂量与完整性丢失**：approx 行此前与 exact 同样式输出克数，且 `build_case`/`_treatment_section` 丢弃 `compose_dose_lines` 的 completeness。现 approx 渲染为「克数（古制，近似）」，无克数行用中文状态（未换算/仅计数/未记载）；`build_case`/`build_syndrome`/`build_composite` 聚合 `dose_complete`，为 `false` 时追加「本方剂量不完全可执行（含非 exact 药味）」提示。
+- 测试：新增 12 条用例（5 条 `test_classify` 参数化行 + 7 条新用例）；唯一改动的既有断言是 `unknown_unit` 的状态文案由 `（unknown_unit）` 改为 `（未换算）`。
+
 ### 已知边界
 
 - 无真实 LLM/AI 语义：默认 `FakeLlm`，`prose` 是结构化字段拼接；`OpenAiCompatibleLlm` 只在配置 key 后由部署方使用，测试不联网、不下载模型。
 - `refusal_threshold=0.30` 是占位值，未用真实日志校准；M5 必须用 `qa_log` 回归（本轮未调阈值）。
 - 实体解析（`intent.mentions`）是库内正名/别名对 query 的**子串最长匹配**，不是分词；不做繁简/错字归一（E3 已登记）。
 - E2 管理端鉴权未做；本里程碑不改鉴权。
-- 剂量渲染以 `dose_g` 是否存在分叉（`builders.format_dose`）：无 `dose_g` 的行（absent/count_only/unknown_unit）原样输出古制并括注状态（五苓散 `茯苓 十八铢（unknown_unit）`）；approx 行有克数、**无**状态标签（如 `附子 15g（一枚(炮)）`）；exact 行为「克数（古制）」（如 `泽泻 15g（一两）`）。`formula_item.dose_state` 实测分布：exact 1795 / absent 219 / count_only 123 / approx 119 / unknown_unit 26。
+- 剂量渲染（`builders.format_dose`）：exact 行为「克数（古制）」（如 `泽泻 15g（一两）`）；approx 行有克数，必须在古制后标「近似」（如 `附子 15g（一枚(炮)，近似)`、问11 `半夏 25g（半升，近似）`），不得与精确值同样式；无 `dose_g` 的行（absent/count_only/unknown_unit）原样输出古制并括注中文状态（`未换算`/`仅计数`/`未记载`，如五苓散 `茯苓 十八铢（未换算）`、问11 `大枣 七枚（仅计数）`），不造克数。`build_case`/`build_syndrome`/`build_composite` 聚合所展示方剂的 `dose_complete`（忽略 `None`，无方时为 `None`），为 `false` 时追加「本方剂量不完全可执行（含非 exact 药味）」提示并随 `Answer.dose_complete` 下发；组合链只算「组成」段点名的方（辨证链的定方剂量不在组合段展示）。`formula_item.dose_state` 实测分布：exact 1795 / absent 219 / count_only 123 / approx 119 / unknown_unit 26。
 - `formula_item.conversion_note` 全库 **0 条**非空（2282 行）——这不是语料缺失，而是 ETL 装载缺口：解析器 `app/etl/parse_formulas.py:76,85` 逐味调 `dose.convert` 并把结果写进 `conversion_note`（真实探针：1197 条非空解析结果，噪声过滤后 1194 条），而 `app/etl/loaders.py:174` 在写 `formula_item` 时把 `conversion_note` 与 `preparation` 一并硬编码为 `None`，注记因此全部未落库；`app/api/evidence.py:101` 仍在输出该字段，说明字段本应被填充。后果是回答里给不出「1两≈15g」这类换算注记，古制只作原文留痕。**这只是第一道阻塞**：即便修好 `loaders.py:174`，回答文本仍打不出该注记——`DoseLine`（`app/rag/schemas.py:17-22`）没有 `conversion_note` 字段，`format_dose` 也从不读取它，须先扩 schema 与构建链。该缺口已登记为已知缺陷（ETL 装载缺口 + schema 缺口），未修复前 2282 行仍为 0 条非空；不要把它当作语料局限。
 - 症状→穴位映射未引用 `AcupointSymptom.source_doc`（49/49 有值但未写进引用或「依据」），引用只到穴位锚点。
+- 医案号只认**句首** `问N`（`intent._CASE_NO`，允许 `问 11` 与「的/是/号/案」后缀，统一由 `intent.case_no` 判定）：前缀式「第11问」「你好，问11」不再路由到医案链；句中的「问+数字」（如「请问11岁…」「请问3天前…」）不会被当成医案号。
+- 逐味 `dose_state` 未上 wire：`Answer` 不新增 `doses` 字段（计划「明确不做」把逐字段前端契约留给 UI 里程碑），M3 只在文本里用「近似/仅计数/未换算/未记载」与 `dose_complete` 呈现状态。
+- 新增会话/日志表（`chat_session`/`chat_message`/`qa_log`）的生产建表路径未提供：目前只有测试夹具 `backend/tests/conftest.py` 调 `Base.metadata.create_all`，生产/开发库初始化留待 M5 部署。
 - 医案多首方的剂量行合并进同一个「剂量」段，无逐方归属标注（问11 即三首合并）。
 - SSE：响应头 200 在检索完成前已发出，中途检索异常没有 coded error frame；客户端断开则不执行 `session.commit()`。
 - 拒答 `prose` 为空只在 `FakeLlm` 下成立；真实 LLM 的「不得新增内容」靠提示词约束，服务端保证的是 `sections`/`candidates`/`disclaimer` 已定稿。

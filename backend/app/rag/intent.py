@@ -18,7 +18,23 @@ class Intent(StrEnum):
     composite = "F"
 
 
-_CASE_NO = re.compile(r"问\s*\d+")
+# 医案号只在句首成立：`问11`/`问 11`/`问11的医案`；`请问11岁…` 不得误判。
+_CASE_NO = re.compile(r"^问\s*(\d+)(?=$|[\s，,。？?！!：:的号案是])")
+
+
+def _case_no_normalized(q: str) -> str | None:
+    match = _CASE_NO.search(q)
+    return f"问{match.group(1)}" if match else None
+
+
+def case_no(query: str) -> str | None:
+    """query 是医案号引用时返回规范号（「问11」），否则 None。
+
+    classify 与 service 共用这一个判断，避免两处正则各自漂移。
+    """
+    return _case_no_normalized(qmod.normalize_query(query))
+
+
 _ACUPOINT_CUE = re.compile(r"穴位|配穴|取穴|扎针|针灸|按穴|针哪|什么穴")
 _COMPOSITE_CUE = re.compile(r"同时|以及|还有|并且|配合|怎么配|加上")
 
@@ -68,7 +84,7 @@ def mentions(session, query: str) -> dict[str, tuple[int, str]]:
 
 def classify(session, query: str) -> Intent:
     q = qmod.normalize_query(query)
-    if _CASE_NO.search(q):
+    if _case_no_normalized(q):
         return Intent.case
     found = mentions(session, q)
     if len(found) >= 2 and _COMPOSITE_CUE.search(q):
