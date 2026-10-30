@@ -75,3 +75,16 @@ def test_chat_returns_coded_error_when_index_missing(client):
     resp = client.post("/api/chat", json={"question": "桂枝汤"})
     assert resp.status_code == 409
     assert resp.json()["detail"]["code"] == "index_not_ready"
+
+
+def test_sse_stream_emits_meta_citations_tokens_done(indexed_client):
+    with indexed_client.stream("POST", "/api/chat/stream", json={"question": "桂枝汤"}) as r:
+        assert r.status_code == 200
+        text = "".join(r.iter_text())
+
+    events = [line[7:] for line in text.splitlines() if line.startswith("event: ")]
+    assert events[0] == "meta"
+    assert "citation" in events
+    assert events[-1] == "done"
+    assert "桂枝" in text
+    assert text.count("event: token") >= 1

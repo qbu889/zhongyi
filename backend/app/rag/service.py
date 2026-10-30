@@ -1,5 +1,6 @@
 """编排入口：意图 → 检索 → 门禁 → 构建 → prose → 落库。"""
 
+import json
 import re
 
 from sqlalchemy import select
@@ -98,3 +99,15 @@ def answer_question(session, question: str, *, session_id: int | None = None,
                       top_score=answer.top_score, hit_count=len(answer.citations)))
     session.flush()
     return ChatResponse(session_id=chat.id, message_id=msg.id, answer=answer)
+
+
+def stream_events(session, question: str, *, session_id: int | None = None,
+                  llm=None, chunk_size: int = 20):
+    resp = answer_question(session, question, session_id=session_id, llm=llm)
+    answer = resp.answer
+    yield f"event: meta\ndata: {json.dumps({'session_id': resp.session_id, 'intent': answer.intent, 'status': answer.status}, ensure_ascii=False)}\n\n"
+    for citation in answer.citations:
+        yield f"event: citation\ndata: {citation.model_dump_json()}\n\n"
+    for start in range(0, len(answer.prose), chunk_size):
+        yield f"event: token\ndata: {json.dumps({'text': answer.prose[start:start + chunk_size]}, ensure_ascii=False)}\n\n"
+    yield f"event: done\ndata: {resp.model_dump_json()}\n\n"

@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models import ChatMessage, ChatSession
 from app.db.session import get_session
 from app.rag.schemas import ChatRequest, ChatResponse
-from app.rag.service import answer_question
+from app.rag.service import answer_question, stream_events
 from app.search import retriever
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -49,3 +50,12 @@ def history(session_id: int, session: Session = Depends(get_session)):
         .order_by(ChatMessage.id)))
     return ChatHistory(session_id=session_id, messages=[
         MessageOut(role=m.role, content=m.content, created_at=m.created_at) for m in rows])
+
+
+@router.post("/stream")
+def chat_stream(payload: ChatRequest, session: Session = Depends(get_session)):
+    def gen():
+        yield from stream_events(session, payload.question, session_id=payload.session_id)
+        session.commit()
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
