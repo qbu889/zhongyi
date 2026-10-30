@@ -37,6 +37,7 @@ def test_case_no_only_anchors_at_query_start():
     assert case_no("问 11的医案") == "问11"
     assert case_no("请问11岁小孩发烧怎么办") is None
     assert case_no("请问38度发烧怎么办") is None
+    assert case_no("问11岁小孩发烧") is None   # 句首「问+数字」后接量词也不得当医案号
 
 
 def test_mentions_picks_longest_name_inside_sentence(indexed):

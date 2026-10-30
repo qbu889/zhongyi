@@ -1537,7 +1537,7 @@ c. **Task 6**：`POST /api/chat` 把 `IndexNotReady / EmbeddingMismatch / ValueE
 
 ### 终审修复（2026-10-30）
 
-整分支终审（BASE `3495a23` → HEAD `09293a0`）报出两项阻塞缺陷，本轮一次修完，提交 `fix(m3): 医案号句首锚定与近似剂量诚实标注`（基线 `09293a0`；提交哈希记录在本轮 `final-fix-report.md`——文档与代码同一提交，无法自指自身哈希）：
+整分支终审（BASE `3495a23` → HEAD `09293a0`）报出两项阻塞缺陷，本轮一次修完，提交 `2eaeff6 fix(m3): 医案号句首锚定与近似剂量诚实标注`（基线 `09293a0`；复审后的标点与断言加固见后续 `fix(m3): 终审复审收尾`）：
 
 - **C1 医案号未锚定**：原 `_CASE_NO = re.compile(r"问\s*\d+")` 不锚定句首，任何「问+数字」子串都会路由到医案链——「请问11岁小孩发烧怎么办」曾直接输出问11 的剂量（「麻黄 60g（四两）」）。这正是 Task 1 留下、台账 defer 却始终没写进「已知边界」的问题。现改为 `^问\s*(\d+)(?=$|[\s，,。？?！!：:的号案是])`，判定集中到 `intent.case_no`，`service._case_by_number` 复用它（不再保留第二份正则）；语法合法但不存在的号（「问999」）按医案类拒答，返回至多 3 条真实医案候选。
 - **I1 近似剂量与完整性丢失**：approx 行此前与 exact 同样式输出克数，且 `build_case`/`_treatment_section` 丢弃 `compose_dose_lines` 的 completeness。现 approx 渲染为「克数（古制，近似）」，无克数行用中文状态（未换算/仅计数/未记载）；`build_case`/`build_syndrome`/`build_composite` 聚合 `dose_complete`，为 `false` 时追加「本方剂量不完全可执行（含非 exact 药味）」提示。
@@ -1549,7 +1549,7 @@ c. **Task 6**：`POST /api/chat` 把 `IndexNotReady / EmbeddingMismatch / ValueE
 - `refusal_threshold=0.30` 是占位值，未用真实日志校准；M5 必须用 `qa_log` 回归（本轮未调阈值）。
 - 实体解析（`intent.mentions`）是库内正名/别名对 query 的**子串最长匹配**，不是分词；不做繁简/错字归一（E3 已登记）。
 - E2 管理端鉴权未做；本里程碑不改鉴权。
-- 剂量渲染（`builders.format_dose`）：exact 行为「克数（古制）」（如 `泽泻 15g（一两）`）；approx 行有克数，必须在古制后标「近似」（如 `附子 15g（一枚(炮)，近似)`、问11 `半夏 25g（半升，近似）`），不得与精确值同样式；无 `dose_g` 的行（absent/count_only/unknown_unit）原样输出古制并括注中文状态（`未换算`/`仅计数`/`未记载`，如五苓散 `茯苓 十八铢（未换算）`、问11 `大枣 七枚（仅计数）`），不造克数。`build_case`/`build_syndrome`/`build_composite` 聚合所展示方剂的 `dose_complete`（忽略 `None`，无方时为 `None`），为 `false` 时追加「本方剂量不完全可执行（含非 exact 药味）」提示并随 `Answer.dose_complete` 下发；组合链只算「组成」段点名的方（辨证链的定方剂量不在组合段展示）。`formula_item.dose_state` 实测分布：exact 1795 / absent 219 / count_only 123 / approx 119 / unknown_unit 26。
+- 剂量渲染（`builders.format_dose`）：exact 行为「克数（古制）」（如 `泽泻 15g（一两）`）；approx 行有克数，必须在古制后标「近似」（如 `附子 15g（一枚(炮)，近似）`、问11 `半夏 25g（半升，近似）`），不得与精确值同样式；无 `dose_g` 的行（absent/count_only/unknown_unit）原样输出古制并括注中文状态（`未换算`/`仅计数`/`未记载`，如五苓散 `茯苓 十八铢（未换算）`、问11 `大枣 七枚（仅计数）`），不造克数。`build_case`/`build_syndrome`/`build_composite` 聚合所展示方剂的 `dose_complete`（忽略 `None`，无方时为 `None`），为 `false` 时追加「本方剂量不完全可执行（含非 exact 药味）」提示并随 `Answer.dose_complete` 下发；组合链只算「组成」段点名的方（辨证链的定方剂量不在组合段展示）。`formula_item.dose_state` 实测分布：exact 1795 / absent 219 / count_only 123 / approx 119 / unknown_unit 26。
 - `formula_item.conversion_note` 全库 **0 条**非空（2282 行）——这不是语料缺失，而是 ETL 装载缺口：解析器 `app/etl/parse_formulas.py:76,85` 逐味调 `dose.convert` 并把结果写进 `conversion_note`（真实探针：1197 条非空解析结果，噪声过滤后 1194 条），而 `app/etl/loaders.py:174` 在写 `formula_item` 时把 `conversion_note` 与 `preparation` 一并硬编码为 `None`，注记因此全部未落库；`app/api/evidence.py:101` 仍在输出该字段，说明字段本应被填充。后果是回答里给不出「1两≈15g」这类换算注记，古制只作原文留痕。**这只是第一道阻塞**：即便修好 `loaders.py:174`，回答文本仍打不出该注记——`DoseLine`（`app/rag/schemas.py:17-22`）没有 `conversion_note` 字段，`format_dose` 也从不读取它，须先扩 schema 与构建链。该缺口已登记为已知缺陷（ETL 装载缺口 + schema 缺口），未修复前 2282 行仍为 0 条非空；不要把它当作语料局限。
 - 症状→穴位映射未引用 `AcupointSymptom.source_doc`（49/49 有值但未写进引用或「依据」），引用只到穴位锚点。
 - 医案号只认**句首** `问N`（`intent._CASE_NO`，允许 `问 11` 与「的/是/号/案」后缀，统一由 `intent.case_no` 判定）：前缀式「第11问」「你好，问11」不再路由到医案链；句中的「问+数字」（如「请问11岁…」「请问3天前…」）不会被当成医案号。

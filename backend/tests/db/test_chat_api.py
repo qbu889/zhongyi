@@ -88,7 +88,7 @@ def test_incidental_number_after_wen_is_not_a_case_reference(indexed_client):
 def test_missing_case_number_refuses_with_case_candidates(indexed_client):
     data = indexed_client.post("/api/chat", json={"question": "问999"}).json()["answer"]
     assert data["intent"] == "E" and data["status"] == "refused"
-    assert len(data["candidates"]) <= 3
+    assert data["candidates"] and len(data["candidates"]) <= 3
     assert all(c["ref_type"] == "case" for c in data["candidates"])
 
 
