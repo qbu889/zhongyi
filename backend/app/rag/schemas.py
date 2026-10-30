@@ -40,3 +40,14 @@ class Answer(BaseModel):
 def citation_from_hit(h) -> Citation:
     return Citation(ref_type=h.ref_type, ref_id=h.ref_id, title=h.title,
                     anchor=h.anchor, snippet=h.snippet)
+
+
+class ChatRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    session_id: int | None = None
+
+
+class ChatResponse(BaseModel):
+    session_id: int
+    message_id: int
+    answer: Answer

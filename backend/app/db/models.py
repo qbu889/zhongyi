@@ -12,6 +12,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -251,3 +252,36 @@ class IndexVersion(Base):
     embedding_model_version: Mapped[str | None] = mapped_column(Text)
     chunking_version: Mapped[str | None] = mapped_column(Text)
     extract_rule_version: Mapped[str | None] = mapped_column(Text)
+
+
+class ChatSession(Base):
+    __tablename__ = "chat_session"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                server_default=func.now())
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_message"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("chat_session.id"), index=True)
+    role: Mapped[str] = mapped_column(Text)
+    content: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 server_default=func.now())
+
+
+class QaLog(Base):
+    __tablename__ = "qa_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int | None] = mapped_column(ForeignKey("chat_session.id"), nullable=True)
+    query: Mapped[str] = mapped_column(Text)
+    intent: Mapped[str] = mapped_column(Text)
+    refused: Mapped[bool] = mapped_column(Boolean, default=False)
+    top_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 server_default=func.now())

@@ -10,6 +10,7 @@ def create_app() -> FastAPI:
 
     from app.api import acupoints as acupoints_api
     from app.api import cases as cases_api
+    from app.api import chat as chat_api
     from app.api import evidence as evidence_api
     from app.api import formulas as formulas_api
     from app.api import herbs as herbs_api
@@ -21,6 +22,7 @@ def create_app() -> FastAPI:
     app.include_router(herbs_api.router)
     app.include_router(acupoints_api.router)
     app.include_router(cases_api.router)
+    app.include_router(chat_api.router)
     app.include_router(evidence_api.router)
     app.include_router(tools_api.router)
 
