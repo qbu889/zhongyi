@@ -26,12 +26,14 @@ def compose_dose_lines(session, formula_id: int) -> tuple[list[DoseLine], bool |
             herb=item.herb_text,
             herb_name=herb_names.get(item.herb_id) if item.herb_id else None,
             g=item.dose_g, ancient=item.dose_text, dose_state=item.dose_state))
-    return lines, all(line.dose_state == "exact" for line in lines)
+    complete = all(line.dose_state == "exact" for line in lines) if lines else None
+    return lines, complete
 
 
 def format_dose(line: DoseLine) -> str:
     if line.g is not None:
-        return f"{line.herb} {line.g:g}g（{line.ancient}）"
+        trace = f"（{line.ancient}）" if line.ancient else ""
+        return f"{line.herb} {line.g:g}g{trace}"
     return f"{line.herb} {line.ancient or '剂量未记载'}（{line.dose_state}）"
 
 
