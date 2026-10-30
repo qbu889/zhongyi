@@ -33,3 +33,6 @@ def test_vague_complaint_asks_instead_of_guessing():
     assert builders.build_followup("咳嗽气喘痰白不能平躺") == []
     assert builders.build_followup("头痛") == []      # 具体症状词不拦，交给检索/门禁
     assert builders.build_followup("咳嗽怎么办") == []  # 「怎么办」只在整句无主诉时算空问
+    assert builders.build_followup("胃痛，很不舒服") == []
+    assert builders.build_followup("咳嗽老不好") == []
+    assert builders.build_followup("头痛不适") == []

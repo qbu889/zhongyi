@@ -188,15 +188,16 @@ def build_case(session, case_id: int) -> Answer:
                   disclaimer=DISCLAIMER)
 
 
-_VAGUE = re.compile(r"不舒服|难受|不适|不好|看看|怎么回事|什么问题")
-_EMPTY_ASK = re.compile(r"^(怎么办|我该怎么办|咋办|帮帮我)$")
+_VAGUE_WORDS = re.compile(
+    r"我该怎么办|怎么回事|什么问题|不舒服|难受|不适|不好|看看|怎么办|咋办|帮帮我"
+    r"|有点|有些|老是|总是|觉得|感觉|就是|真的|特别|最近|一直|很|老|太|我|了|啊|呀|呢")
 _FILLER = re.compile(r"[\s，,。？?！!、]")
 
 
 def build_followup(query: str) -> list[str]:
     """FR-5：只有泛泛主诉（「不舒服/难受」）或空问句才追问；具体症状词不拦。"""
     core = _FILLER.sub("", qmod.normalize_query(query))
-    if core and not _VAGUE.search(core) and not _EMPTY_ASK.search(core):
+    if core and _VAGUE_WORDS.sub("", core):
         return []
     return ["主要不适在哪个部位？（头项/胸胁/脘腹/四肢/全身）",
             "有无恶寒发热、汗出、口渴？大便、小便与平时相比如何？",
