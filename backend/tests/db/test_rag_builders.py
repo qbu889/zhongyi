@@ -1,9 +1,10 @@
 from sqlalchemy import select
 
 from app.admin.reindex import run_reindex
-from app.db.models import Formula, Herb
+from app.db.models import Case, Formula, Herb
 from app.rag import builders
 from app.rag.gate import DISCLAIMER
+from app.search import retriever
 
 
 def test_format_dose_without_ancient_text_is_not_printed_as_none():
@@ -67,3 +68,30 @@ def test_herb_answer_declares_missing_flavor(db_session):
     body = " ".join(line for s in ans.sections for line in s.lines)
     assert "本经未载性味" in body
 
+
+def test_acupoints_from_symptom_table(db_session):
+    run_reindex(db_session)
+    hits = retriever.search(db_session, "头痛", kinds={"acupoint"}, top=10).hits
+    ans = builders.build_acupoints(db_session, "头痛", hits)
+    body = " ".join(line for s in ans.sections for line in s.lines)
+    assert "风池" in body and "后溪" in body
+
+
+def test_cough_has_no_symptom_section_so_special_branch_is_mandatory(db_session):
+    run_reindex(db_session)
+    hits = retriever.search(db_session, "咳嗽气喘按什么穴", kinds={"acupoint"}, top=10).hits
+    ans = builders.build_acupoints(db_session, "咳嗽气喘按什么穴", hits)
+    body = " ".join(line for s in ans.sections for line in s.lines)
+    assert {"列缺", "照海", "肺俞", "中府"} <= {n for n in ["列缺", "照海", "肺俞", "中府"] if n in body}
+    assert ans.sections[0].title == "取穴"
+
+
+def test_case_answer_follows_question_answer_treatment_format(db_session):
+    run_reindex(db_session)
+    cid = db_session.scalar(select(Case.id).where(Case.no == "问11"))
+    ans = builders.build_case(db_session, cid)
+    titles = [s.title for s in ans.sections]
+    assert titles[:4] == ["问", "答", "治", "要诀"]
+    assert "剂量" in titles          # 问11 的三首方都有古制剂量
+    assert ans.headline.startswith("问11")
+    assert "射干麻黄汤" in " ".join(line for s in ans.sections for line in s.lines)
