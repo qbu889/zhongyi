@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     )
     repo_dir: Path = Path(__file__).resolve().parents[2]
     embed_model: str = "BAAI/bge-m3"
+    refusal_threshold: float = 0.30   # D2：先用占位值，M5 由问答日志回归
 
     @property
     def distilled_dir(self) -> Path:
