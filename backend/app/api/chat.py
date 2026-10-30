@@ -9,6 +9,7 @@ from app.db.models import ChatMessage, ChatSession
 from app.db.session import get_session
 from app.rag.schemas import ChatRequest, ChatResponse
 from app.rag.service import answer_question
+from app.search import retriever
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -26,7 +27,15 @@ class ChatHistory(BaseModel):
 
 @router.post("", response_model=ChatResponse)
 def chat(payload: ChatRequest, session: Session = Depends(get_session)):
-    resp = answer_question(session, payload.question, session_id=payload.session_id)
+    try:
+        resp = answer_question(session, payload.question, session_id=payload.session_id)
+    except retriever.IndexNotReady:
+        raise HTTPException(409, detail={"code": "index_not_ready",
+                                         "message": "索引尚未构建，请先调用 /api/admin/reindex"})
+    except retriever.EmbeddingMismatch as exc:
+        raise HTTPException(503, detail={"code": "embedding_mismatch", "message": str(exc)})
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "bad_request", "message": str(exc)})
     session.commit()
     return resp
 

@@ -69,3 +69,9 @@ def test_session_history_keeps_both_turns(indexed_client):
     hist = indexed_client.get(f"/api/chat/{sid}").json()
     assert [m["role"] for m in hist["messages"]] == ["user", "assistant", "user", "assistant"]
     assert hist["messages"][0]["content"]["text"] == "桂枝汤"
+
+
+def test_chat_returns_coded_error_when_index_missing(client):
+    resp = client.post("/api/chat", json={"question": "桂枝汤"})
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "index_not_ready"
