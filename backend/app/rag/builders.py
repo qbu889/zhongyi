@@ -8,10 +8,12 @@ from app.db.models import (
     Acupoint, AcupointSymptom, Case, Formula, FormulaDoseVariant, FormulaEvidence,
     FormulaItem, Herb,
 )
+from app.rag import intent as intent_mod
 from app.rag.gate import DISCLAIMER
 from app.rag.schemas import Answer, Citation, DoseLine, Section, citation_from_hit
 from app.search import anchors as anchor_mod
-from app.search.query import Hit
+from app.search import query as qmod
+from app.search.query import MATCH_EXACT, Hit
 
 
 def compose_dose_lines(session, formula_id: int) -> tuple[list[DoseLine], bool | None]:
@@ -184,3 +186,87 @@ def build_case(session, case_id: int) -> Answer:
                   citations=[Citation(ref_type="case", ref_id=case.id, title=case.no,
                                       anchor=anchor_mod.case_anchor(case.no))],
                   disclaimer=DISCLAIMER)
+
+
+_VAGUE = re.compile(r"不舒服|难受|不适|不好|看看|怎么回事|什么问题")
+_EMPTY_ASK = re.compile(r"^(怎么办|我该怎么办|咋办|帮帮我)$")
+_FILLER = re.compile(r"[\s，,。？?！!、]")
+
+
+def build_followup(query: str) -> list[str]:
+    """FR-5：只有泛泛主诉（「不舒服/难受」）或空问句才追问；具体症状词不拦。"""
+    core = _FILLER.sub("", qmod.normalize_query(query))
+    if core and not _VAGUE.search(core) and not _EMPTY_ASK.search(core):
+        return []
+    return ["主要不适在哪个部位？（头项/胸胁/脘腹/四肢/全身）",
+            "有无恶寒发热、汗出、口渴？大便、小便与平时相比如何？",
+            "睡眠、胃口、精神怎样？起病多久了？"]
+
+
+def _treatment_section(session, formula_ids: list[int]) -> Section | None:
+    names, doses = [], []
+    for fid in formula_ids:
+        formula = session.get(Formula, fid)
+        if formula is None:
+            continue
+        names.append(formula.canonical_name)
+        lines, _ = compose_dose_lines(session, fid)
+        doses.extend(format_dose(d) for d in lines)
+    if not names:
+        return None
+    return Section(title="定方", lines=[f"治：{'、'.join(names)}"] + doses)
+
+
+def build_syndrome(session, query: str, hits, case_hits) -> Answer:
+    case_hit = next((h for h in case_hits if h.ref_type == "case" and h.score >= 0.30), None)
+    sections = [Section(title="辨证", lines=[f"{h.title}：{h.snippet}" for h in hits[:3]]
+                        or ["本地库未检索到对应条文"])]
+    citations = [citation_from_hit(h) for h in hits[:3]]
+    treatment = None
+    if case_hit is not None:
+        case = session.get(Case, case_hit.ref_id)
+        treatment = _treatment_section(session, list(case.treatment_formula_ids or []))
+        citations.insert(0, Citation(ref_type="case", ref_id=case.id, title=case.no,
+                                     anchor=anchor_mod.case_anchor(case.no)))
+        if case.tips:
+            sections.append(Section(title="调护", lines=[case.tips]))
+    else:
+        # 没有够分的医案时，只认整名精确的方剂 hit；向量近邻不能当作定方依据
+        formula_hit = next((h for h in hits if h.ref_type == "formula"
+                            and h.match == MATCH_EXACT), None)
+        if formula_hit is not None:
+            treatment = _treatment_section(session, [formula_hit.ref_id])
+    if treatment is None:
+        # 语料事实：部分医案只写方名不给结构化 formula_id 时不造方
+        treatment = Section(title="定方", lines=["本条未落到结构化方剂"])
+    sections.insert(1, treatment)
+    return Answer(intent="A", headline=query, sections=sections, citations=citations,
+                  disclaimer=DISCLAIMER, top_score=_top_score(hits, case_hits))
+
+
+def build_composite(session, query: str, hits, case_hits, found=None) -> Answer:
+    """组合问句：实体用 mentions 解析（整句检索命中不了「桂枝汤配合风池穴」里的正名）。"""
+    found = intent_mod.mentions(session, query) if found is None else found
+    syndrome = build_syndrome(session, query, hits, case_hits)
+    sections = [Section(title="辨证", lines=syndrome.sections[0].lines)]
+    citations = list(syndrome.citations)
+
+    if "formula" in found:
+        built = build_formula(session, found["formula"][0])
+        sections.append(Section(title="组成", lines=built.sections[0].lines))
+        citations.extend(built.citations)
+
+    if "acupoint" in found:
+        point = session.get(Acupoint, found["acupoint"][0])
+        sections.append(Section(title="取穴",
+                                lines=_acupoint_lines({point.name: point}, [point.name])))
+        citations.append(Citation(
+            ref_type="acupoint", ref_id=point.id, title=point.name,
+            anchor=anchor_mod.acupoint_anchor(point.name, point.meridian)))
+    else:
+        acupoints = build_acupoints(session, query, hits)
+        sections.append(Section(title="取穴", lines=acupoints.sections[0].lines))
+        citations.extend(acupoints.citations)
+
+    return Answer(intent="F", headline=query, sections=sections, citations=citations,
+                  disclaimer=DISCLAIMER, top_score=_top_score(hits, case_hits))

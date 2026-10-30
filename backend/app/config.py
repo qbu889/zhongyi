@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     repo_dir: Path = Path(__file__).resolve().parents[2]
     embed_model: str = "BAAI/bge-m3"
     refusal_threshold: float = 0.30   # D2：先用占位值，M5 由问答日志回归
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str = "gpt-4o-mini"
+    llm_api_key: str = ""
 
     @property
     def distilled_dir(self) -> Path:
