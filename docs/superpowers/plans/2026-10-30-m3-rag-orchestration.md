@@ -1542,7 +1542,7 @@ c. **Task 6**：`POST /api/chat` 把 `IndexNotReady / EmbeddingMismatch / ValueE
 - 实体解析（`intent.mentions`）是库内正名/别名对 query 的**子串最长匹配**，不是分词；不做繁简/错字归一（E3 已登记）。
 - E2 管理端鉴权未做；本里程碑不改鉴权。
 - 非 exact 剂量状态原样出现在括号里：五苓散 `茯苓 十八铢（unknown_unit）`、`泽泻 15g（一两）`。`formula_item.dose_state` 实测分布：exact 1795 / absent 219 / count_only 123 / approx 119 / unknown_unit 26。
-- `formula_item.conversion_note` 全库 **0 条**非空（2282 行），因此回答里无法给出「1两≈15g」这类换算注记；古制只作原文留痕。
+- `formula_item.conversion_note` 全库 **0 条**非空（2282 行）——这不是语料缺失，而是 ETL 装载缺口：解析器 `app/etl/parse_formulas.py:76,85` 逐味调 `dose.convert` 并把结果写进 `conversion_note`（真实探针：1197 条非空解析结果，噪声过滤后 1194 条），而 `app/etl/loaders.py:174` 在写 `formula_item` 时把 `conversion_note` 与 `preparation` 一并硬编码为 `None`，注记因此全部未落库；`app/api/evidence.py:101` 仍在输出该字段，说明字段本应被填充。后果是回答里给不出「1两≈15g」这类换算注记，古制只作原文留痕。该缺口已登记为已知缺陷（ETL 装载缺口），未修复前 2282 行仍为 0 条非空；不要把它当作语料局限。
 - 症状→穴位映射未引用 `AcupointSymptom.source_doc`（49/49 有值但未写进引用或「依据」），引用只到穴位锚点。
 - 医案多首方的剂量行合并进同一个「剂量」段，无逐方归属标注（问11 即三首合并）。
 - SSE：响应头 200 在检索完成前已发出，中途检索异常没有 coded error frame；客户端断开则不执行 `session.commit()`。
