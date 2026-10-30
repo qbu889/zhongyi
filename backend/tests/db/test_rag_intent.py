@@ -1,0 +1,34 @@
+import pytest
+
+from app.admin.reindex import run_reindex
+from app.rag.intent import Intent, classify, mentions
+
+
+@pytest.fixture
+def indexed(db_session):
+    run_reindex(db_session)
+    return db_session
+
+
+@pytest.mark.parametrize("query, expected", [
+    ("桂枝汤", Intent.formula),
+    ("桂枝加葛根汤", Intent.formula),
+    ("桂枝", Intent.herb),
+    ("牡桂", Intent.herb),
+    ("风池", Intent.acupoint),
+    ("咳嗽气喘按什么穴", Intent.acupoint),
+    ("问11", Intent.case),
+    ("咳嗽气喘痰白不能平躺", Intent.syndrome),
+    ("太阳病怎么办", Intent.syndrome),          # 太阳也是穴位名，裸名不得抢走六经问句
+    ("桂枝汤配合风池穴怎么用", Intent.composite),
+])
+def test_classify(indexed, query, expected):
+    assert classify(indexed, query) == expected
+
+
+def test_mentions_picks_longest_name_inside_sentence(indexed):
+    found = mentions(indexed, "桂枝加葛根汤配合风池穴")
+    assert found["formula"][1] == "桂枝加葛根汤"
+    assert found["acupoint"][1] == "风池"
+    # 别名也算命中，但返回正名：桂枝 → 牡桂（FR-8）
+    assert mentions(indexed, "桂枝")["herb"][1] == "牡桂"
