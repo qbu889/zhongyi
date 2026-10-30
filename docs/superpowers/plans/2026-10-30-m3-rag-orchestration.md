@@ -34,7 +34,7 @@
 - Produces: `Intent`（StrEnum，值 `A/B/C/D/E/F`）、`classify(session, query) -> Intent`、`mentions(session, query) -> dict[str, tuple[int, str]]`。
 - `mentions` 的 key 是 `formula/herb/acupoint`，value 是 `(id, 正名)`；组合链与实体门禁复用。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 import pytest
@@ -73,12 +73,12 @@ def test_mentions_picks_longest_name_inside_sentence(indexed):
     assert mentions(indexed, "桂枝")["herb"][1] == "牡桂"
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_rag_intent.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.rag'`
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 `backend/app/rag/__init__.py` 留空。
 
@@ -170,12 +170,12 @@ def classify(session, query: str) -> Intent:
     return Intent.syndrome
 ```
 
-- [ ] **Step 4: 运行并确认通过**
+- [x] **Step 4: 运行并确认通过**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_rag_intent.py -q`
 Expected: PASS（11 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/app/rag/__init__.py backend/app/rag/intent.py backend/tests/db/test_rag_intent.py
@@ -195,7 +195,7 @@ git commit -m "feat(m3): 意图分类六类规则（FR-1）"
 - Produces: `DISCLAIMER`、`REFUSAL_HEADLINE`、`GateDecision(refused, reason, candidates)`、`decide(intent, hits, *, threshold=None, entity_found=False) -> GateDecision`。
 - `entity_found=True` 表示 `intent.mentions` 已解析出与 intent 同类型的实体（服务层只对 formula/herb 传）；此时不再要求整句等于正名。穴位裸名不传：`太阳` 是穴名但 `太阳病` 是六经问句。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 from app.rag.gate import DISCLAIMER, decide
@@ -232,12 +232,12 @@ def test_disclaimer_is_the_prd_text():
     assert DISCLAIMER == "本回答基于本地蒸馏语料整理，仅供学习与检索参考；诊断与用药请由执业中医师面诊决定。"
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/unit/test_rag_gate.py -q`
 Expected: FAIL — `ModuleNotFoundError: app.rag.gate`
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```python
 """FR-3 门禁：实体类问题必须精确命中；其余按可配置阈值拒答。阈值来源是 D2 回归调参，不在此拍板。"""
@@ -283,12 +283,12 @@ def decide(intent: Intent, hits: list[Hit], *, threshold: float | None = None,
     refusal_threshold: float = 0.30   # D2：先用占位值，M5 由问答日志回归
 ```
 
-- [ ] **Step 4: 运行并确认通过**
+- [x] **Step 4: 运行并确认通过**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/unit/test_rag_gate.py -q`
 Expected: PASS（5 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/app/rag/gate.py backend/app/config.py backend/tests/unit/test_rag_gate.py
@@ -317,7 +317,7 @@ git commit -m "feat(m3): 证据门禁与拒答判定（FR-3/D2）"
   - `_top_score(*hit_groups) -> float | None`（内部工具，后续任务的 Answer 用它填 `top_score`）
 - 后续任务复用 `compose_dose_lines` 给辨证/医案/综合链。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 from sqlalchemy import select
@@ -360,12 +360,12 @@ def test_herb_answer_declares_missing_flavor(db_session):
     assert "本经未载性味" in body
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_rag_builders.py -q`
 Expected: FAIL — `ModuleNotFoundError: app.rag.schemas`
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 `backend/app/rag/schemas.py`:
 
@@ -512,12 +512,12 @@ def build_herb(session, herb_id: int) -> Answer:
 
 注意：`Herb` 的 `taste_group/indications/dosage_note/taboo` 已核对存在于 `backend/app/db/models.py`，按上述字段输出；`flavor` 是空串时统一显示「本经未载性味」，不补推测值。
 
-- [ ] **Step 4: 运行并确认通过**
+- [x] **Step 4: 运行并确认通过**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_rag_builders.py -q`
 Expected: PASS（3 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/app/rag/schemas.py backend/app/rag/builders.py backend/tests/db/test_rag_builders.py
@@ -536,7 +536,7 @@ git commit -m "feat(m3): 结构化回答与方/药构建（FR-4）"
 - Produces: `build_acupoints(session, query, hits) -> Answer`、`build_case(session, case_id) -> Answer`。
 - `build_acupoints` 的 `hits` 是 `list[app.search.query.Hit]`；空列表时仍可走症状表/咳喘特例。
 
-- [ ] **Step 1: 写失败测试（追加）**
+- [x] **Step 1: 写失败测试（追加）**
 
 ```python
 from app.db.models import Case
@@ -569,12 +569,12 @@ def test_case_answer_follows_question_answer_treatment_format(db_session):
     assert "射干麻黄汤" in " ".join(line for s in ans.sections for line in s.lines)
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_rag_builders.py -q`
 Expected: FAIL — `AttributeError: module 'app.rag.builders' has no attribute 'build_acupoints'`
 
-- [ ] **Step 3: 最小实现（追加到 builders.py）**
+- [x] **Step 3: 最小实现（追加到 builders.py）**
 
 ```python
 import re
@@ -673,12 +673,12 @@ def build_case(session, case_id: int) -> Answer:
 
 注意：如果 `Case.treatment_formula_ids` 为空但 `treatment` 文本含「射干麻黄汤」，`build_case` 仍会通过 `treatment` 行满足测试；不要为此加正则解析。
 
-- [ ] **Step 4: 运行并确认通过**
+- [x] **Step 4: 运行并确认通过**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_rag_builders.py -q`
 Expected: PASS（6 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/app/rag/builders.py backend/tests/db/test_rag_builders.py
@@ -706,7 +706,7 @@ git commit -m "feat(m3): 取穴链咳喘特例与医案四段式（FR-9/E）"
   - `OpenAiCompatibleLlm(base_url, model, api_key)`
   - `get_llm() -> LlmClient`（未配置 key 时返回 FakeLlm）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `backend/tests/db/test_rag_syndrome.py`:
 
@@ -779,12 +779,12 @@ def test_real_adapter_refuses_without_key(monkeypatch):
     assert isinstance(get_llm(), FakeLlm)
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/unit/test_rag_llm.py tests/db/test_rag_syndrome.py -q`
 Expected: FAIL — `ModuleNotFoundError: app.rag.llm`
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 `backend/app/rag/llm.py`:
 
@@ -932,12 +932,12 @@ def build_composite(session, query: str, hits, case_hits, found=None) -> Answer:
                   disclaimer=DISCLAIMER, top_score=_top_score(hits, case_hits))
 ```
 
-- [ ] **Step 4: 运行并确认通过**
+- [x] **Step 4: 运行并确认通过**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/unit/test_rag_llm.py tests/db/test_rag_syndrome.py -q`
 Expected: PASS（5 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/app/rag/llm.py backend/app/rag/builders.py backend/app/config.py backend/tests/unit/test_rag_llm.py backend/tests/db/test_rag_syndrome.py
@@ -963,7 +963,7 @@ git commit -m "feat(m3): 辨证/综合链与 LLM 适配器（FR-4/D1）"
   - `GET /api/chat/{session_id}` → `{session_id, messages: [{role, content, created_at}]}`
   - 表：`chat_session`、`chat_message`、`qa_log`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 from sqlalchemy import func, select
@@ -1047,12 +1047,12 @@ def indexed_client(client, db_session):
     return client
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_chat_api.py -q`
 Expected: FAIL — `ModuleNotFoundError: app.api.chat`
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 `backend/app/db/models.py` 追加（文件末尾）：
 
@@ -1268,12 +1268,12 @@ def history(session_id: int, session: Session = Depends(get_session)):
     app.include_router(chat_api.router)
 ```
 
-- [ ] **Step 4: 运行并确认通过**
+- [x] **Step 4: 运行并确认通过**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_chat_api.py -q`
 Expected: PASS（4 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/app/db/models.py backend/app/rag/service.py backend/app/rag/schemas.py backend/app/api/chat.py backend/app/main.py backend/tests/db/test_chat_api.py
@@ -1293,7 +1293,7 @@ git commit -m "feat(m3): 会话/问答日志与 POST /api/chat（FR-6/15）"
 - Produces: `POST /api/chat/stream`，事件序列 `meta → citation* → token* → done`；`done` 的 `data` 是完整 `ChatResponse` JSON。
 - `stream_events(session, question, *, session_id=None, llm=None, chunk_size=20) -> iterator[str]`（在 service 中，便于单测）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_sse_stream_emits_meta_citations_tokens_done(indexed_client):
@@ -1309,12 +1309,12 @@ def test_sse_stream_emits_meta_citations_tokens_done(indexed_client):
     assert text.count("event: token") >= 1
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_chat_api.py::test_sse_stream_emits_meta_citations_tokens_done -q`
 Expected: FAIL — 404（路由不存在）
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 `backend/app/rag/service.py` 追加：
 
@@ -1351,12 +1351,12 @@ def chat_stream(payload: ChatRequest, session: Session = Depends(get_session)):
     return StreamingResponse(gen(), media_type="text/event-stream")
 ```
 
-- [ ] **Step 4: 运行并确认通过**
+- [x] **Step 4: 运行并确认通过**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_chat_api.py -q`
 Expected: PASS（5 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/app/api/chat.py backend/app/rag/service.py backend/tests/db/test_chat_api.py
@@ -1375,7 +1375,7 @@ git commit -m "feat(m3): SSE 流式回答（meta/citation/token/done）"
 **Interfaces:**
 - 无新接口；只锁定前 7 个任务的联合行为。
 
-- [ ] **Step 1: 写失败验收测试**
+- [x] **Step 1: 写失败验收测试**
 
 ```python
 import pytest
@@ -1449,12 +1449,12 @@ def test_low_score_is_refused_not_answered(indexed):
     assert ans["status"] == "refused"
 ```
 
-- [ ] **Step 2: 运行并确认失败/暴露缺口**
+- [x] **Step 2: 运行并确认失败/暴露缺口**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/db/test_rag_acceptance.py -q`
 Expected: 允许部分失败；逐条修到全绿（失败原因只能是编排缺口，不允许改断言迁就实现）。
 
-- [ ] **Step 3: 修缺口（按失败项，最小改动）**
+- [x] **Step 3: 修缺口（按失败项，最小改动）**
 
 常见缺口与处置：
 - 取穴特例没命中 → 检查 `_symptom_terms` 是否把「按什么穴」剥干净；咳喘分支必须优先于 hits 兜底。
@@ -1463,16 +1463,16 @@ Expected: 允许部分失败；逐条修到全绿（失败原因只能是编排�
 - 五苓散没有「铢」→ 确认 `compose_dose_lines` 选的是 `dose_basis="ancient"` 变体。
 - 拒答候选为空 → 允许为空（语料无近邻时），不要把随机 hit 硬塞进候选。
 
-- [ ] **Step 4: 全量回归**
+- [x] **Step 4: 全量回归**
 
 Run: `cd backend && .venv/bin/python -m pytest -q`
 Expected: 全部通过；若既有用例失败，先判定是行为变更还是回归，行为变更须同步改断言并在提交信息里说明。
 
-- [ ] **Step 5: 更新文档**
+- [x] **Step 5: 更新文档**
 
 PRD §8 M3 行改为「已落地（日期）+ 验收命令 + 诚实边界」；在本文档末尾追加「实测记录」：通过/未通过用例、拒答样本、已知边界（无真实 LLM/AI 语义、阈值未校准、实体解析是子串最长匹配而非分词、E2 未做）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add backend/tests/db/test_rag_acceptance.py docs/需求文档-RAG系统.md docs/superpowers/plans/2026-10-30-m3-rag-orchestration.md
@@ -1492,3 +1492,58 @@ git commit -m "test(m3): PIPELINE §6 验收与拒答/剂量边界"
 - 不引入繁简/错字归一：E3 已登记为独立边界。
 - 取穴症状表仍是「整词/长句精确包含」匹配；散文式主诉靠向量召回兜底（E3 acupoint R@10 1.000），不在此自造分词器。
 - `mentions` 每次请求全表读约 1.1k 条正名/别名（实测单次毫秒级）；M3 不建倒排/缓存，性能优化留待压测里程碑。
+
+---
+
+## 实测记录（2026-10-30，Task 8 收尾）
+
+### 命令与结果
+
+工作目录 `backend`：
+
+```
+$ .venv/bin/python -m pytest tests/db/test_rag_acceptance.py -q
+6 passed, 1 warning in 11.55s
+
+$ .venv/bin/python -m pytest -q
+301 passed, 1 deselected, 1 xfailed, 1 warning in 225.52s (0:03:45)
+```
+
+基线 295 passed / 1 deselected / 1 xfailed；本任务只新增 6 条验收用例，既有断言零改动（本轮未发现需要同步的行为变更）。6 条用例首轮即全绿，未改任何编排代码：
+
+| 用例 | 断言 | 实测 |
+|---|---|---|
+| `test_pipeline_case_1_lands_case_11_with_doses` | answered、含射干麻黄汤、有 case 引用 | 通过：sections 为 问/答/治/要诀/剂量，剂量段 射干 45g（三两）、麻黄 60g（四两）… 三首方合并 |
+| `test_case_2_acupoints_are_covered` | 风池/后溪/天柱 全部出现 | 通过 |
+| `test_refusal_is_clean_and_disclaimed` | refused、sections 空、候选 ≤3、免责开头 | 通过 |
+| `test_every_answer_has_server_side_disclaimer` | 5 类问句免责结尾一致 | 通过 |
+| `test_dose_states_are_never_silently_filled` | 有克必有古制括号、含「十八铢」 | 通过 |
+| `test_low_score_is_refused_not_answered` | 低分只拒答 | 通过 |
+
+### 拒答样本（`POST /api/chat` 实测输出，`FakeLlm`）
+
+| query | status | intent | 候选数 | top_score |
+|---|---|---|---|---|
+| 乳腺癌靶向药有哪些 | refused | A | 3（06-医案/临床问答对.md｜重症/癌症类、问2（重症/癌症类）、02-伤寒论/临证诊断与治则补充.md｜药简力专，敢用毒药） | 0.1739 |
+| 量子针灸能治癌症吗 | refused | D | 3 | 0.2807 |
+
+两者 `sections=[]`、`prose` 为空串、`disclaimer` 以「本回答基于本地蒸馏语料」开头。对照：同轮「咳嗽气喘痰白不能平躺」为 answered，top_score 0.3967，sections 为 辨证/定方。
+
+### 与计划片段的偏差（以落地代码为准）
+
+a. **Task 4**：医案回答实际为 5 段（问/答/治/要诀/剂量）——问11 的 `treatment_formula_ids` 是 射干麻黄汤/乌梅丸/厚朴三物汤 三首，`compose_dose_lines` 均有古制剂量，非空即补「剂量」段；测试写 `titles[:4] == ["问", "答", "治", "要诀"]` 且 `"剂量" in titles`，非计划里的四段等值断言。
+b. **Task 5**：`build_followup` 落地为「剥离虚词/问句/软化词后仍有实质内容则不追问」，替代计划里的整句 `_VAGUE` 正则；后者会把「咳嗽老不好」「头痛不适」这类具体主诉误拦成 `needs_more_info`。
+c. **Task 6**：`POST /api/chat` 把 `IndexNotReady / EmbeddingMismatch / ValueError` 映射为 409（`index_not_ready`）/ 503（`embedding_mismatch`）/ 422（`bad_request`），与 `/api/search` 对齐，并有 `test_chat_returns_coded_error_when_index_missing` 回归。
+
+### 已知边界
+
+- 无真实 LLM/AI 语义：默认 `FakeLlm`，`prose` 是结构化字段拼接；`OpenAiCompatibleLlm` 只在配置 key 后由部署方使用，测试不联网、不下载模型。
+- `refusal_threshold=0.30` 是占位值，未用真实日志校准；M5 必须用 `qa_log` 回归（本轮未调阈值）。
+- 实体解析（`intent.mentions`）是库内正名/别名对 query 的**子串最长匹配**，不是分词；不做繁简/错字归一（E3 已登记）。
+- E2 管理端鉴权未做；本里程碑不改鉴权。
+- 非 exact 剂量状态原样出现在括号里：五苓散 `茯苓 十八铢（unknown_unit）`、`泽泻 15g（一两）`。`formula_item.dose_state` 实测分布：exact 1795 / absent 219 / count_only 123 / approx 119 / unknown_unit 26。
+- `formula_item.conversion_note` 全库 **0 条**非空（2282 行），因此回答里无法给出「1两≈15g」这类换算注记；古制只作原文留痕。
+- 症状→穴位映射未引用 `AcupointSymptom.source_doc`（49/49 有值但未写进引用或「依据」），引用只到穴位锚点。
+- 医案多首方的剂量行合并进同一个「剂量」段，无逐方归属标注（问11 即三首合并）。
+- SSE：响应头 200 在检索完成前已发出，中途检索异常没有 coded error frame；客户端断开则不执行 `session.commit()`。
+- 拒答 `prose` 为空只在 `FakeLlm` 下成立；真实 LLM 的「不得新增内容」靠提示词约束，服务端保证的是 `sections`/`candidates`/`disclaimer` 已定稿。
