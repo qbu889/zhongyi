@@ -19,7 +19,7 @@ def test_first_reindex_publishes_a_version(db_session):
     assert report.commit_hash == distilled_commit_hash()
     assert report.status == "ready" and not report.reused
     assert report.counts["herb"] == 379 and report.counts["formula"] == 423
-    assert report.chunks == 1824
+    assert report.chunks == 1818      # 346 穴位（去掉 6 个碎片伪行）
     # NFR-6：版本由语料 hash + embedding 模型 + 切片规则 + 抽取规则共同决定
     row = _ready(db_session)[0]
     assert (row.commit_hash, row.chunking_version, row.extract_rule_version) == (

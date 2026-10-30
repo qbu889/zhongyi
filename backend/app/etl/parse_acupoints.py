@@ -17,6 +17,31 @@ from app.etl.normalizers import norm
 _MERIDIAN_HEAD = re.compile(r"^(.+?)\s*(?:\(出现 \d+ 穴\))?\s*$")
 _ROLE_SPLIT = re.compile(r"[·、,，]")
 _POINT_SPLIT = re.compile(r"[、,，+/＋]")
+_PAREN_NOTE = re.compile(r"[（(][^（()）]*[）)]$")
+
+
+def _split_points(raw: str) -> list[str]:
+    """按分隔符拆穴名，但括号内的 `/`、`+` 是别名注（`十井(少商/商阳等)`），不拆。"""
+    parts: list[str] = []
+    buf = ""
+    depth = 0
+    for ch in raw:
+        if ch in "(（":
+            depth += 1
+        elif ch in ")）":
+            depth = max(0, depth - 1)
+        if depth == 0 and _POINT_SPLIT.match(ch):
+            parts.append(buf)
+            buf = ""
+        else:
+            buf += ch
+    parts.append(buf)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _strip_alias(point: str) -> str:
+    """`水沟(人中)` 的括号是别名注，穴名是 `水沟`。"""
+    return _PAREN_NOTE.sub("", point).strip()
 _PLACEHOLDER = re.compile(r"^[—－\-\s]*$")
 
 
@@ -138,7 +163,8 @@ def parse_symptoms(text: str) -> list[SymptomRecord]:
             continue
         if _PLACEHOLDER.match(raw_points or ""):
             continue
-        for point in (p.strip() for p in _POINT_SPLIT.split(raw_points)):
+        for raw_point in _split_points(raw_points):
+            point = _strip_alias(raw_point)
             if point and not _PLACEHOLDER.match(point):
                 out.append(SymptomRecord(
                     symptom=norm(symptom), point=norm(point), excerpt=excerpt,

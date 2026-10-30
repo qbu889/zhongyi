@@ -11,6 +11,13 @@ def test_normalize_query_strips_whitespace_and_normalizes_fang():
     assert q.formula_query("温经方") == "温经方"        # 真以「方」结尾的方名不许剥
 
 
+def test_normalize_query_removes_spaces_between_cjk_chars():
+    """E3 对抗样本：`桂枝 汤` 必须与 `桂枝汤` 等价，否则精确通道被一个空格击穿。"""
+    assert q.normalize_query("桂枝 汤") == "桂枝汤"
+    assert q.normalize_query(" 小 柴 胡 汤 ") == "小柴胡汤"
+    assert q.normalize_query("bge m3") == "bge m3"     # 拉丁词之间的空格有意义，保留
+
+
 def test_literal_score_is_ngram_coverage():
     assert q.literal_score("汗出恶风", "太阳病，汗出恶风者") == 1.0
     assert q.literal_score("汗出恶风", "太阳病，头痛发热") == 0.0

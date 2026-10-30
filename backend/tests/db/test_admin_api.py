@@ -20,14 +20,15 @@ def test_reindex_then_quality_report_over_http(client):
     posted = client.post("/api/admin/reindex")
     assert posted.status_code == 200, posted.text
     body = posted.json()
-    assert body["status"] == "ready" and body["chunks"] == 1824
+    assert body["status"] == "ready" and body["chunks"] == 1818
     assert body["counts"]["herb"] == 379
 
     report = client.get("/api/admin/quality-report")
     assert report.status_code == 200
     payload = report.json()
     assert payload["index_version"]["id"] == body["version_id"]
-    assert payload["index_version"]["notes"]["skipped"] == {"pair_missing_variant": 4}
+    assert payload["index_version"]["notes"]["skipped"] == {"pair_missing_variant": 4,
+                                                            "acupoint_symptom": 4}
     # 七张清单的键必须稳定存在（前端管理页按键渲染，缺键就是空白表）
     for key in ("herb_diff", "dose_deviation", "parse_failures", "annotation_items",
                 "dangling_herbs", "dose_state_distribution", "pending_queue"):

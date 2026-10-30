@@ -44,9 +44,10 @@ def test_report_carries_reindex_skips_from_index_version(db_session):
     reindex.run_reindex(db_session, embedder=HashingEmbedder())
     db_session.commit()
     report = quality.build_quality_report(db_session)
-    assert report.index_version["notes"]["skipped"] == {"pair_missing_variant": 4}
+    assert report.index_version["notes"]["skipped"] == {"pair_missing_variant": 4,
+                                                        "acupoint_symptom": 4}
     assert report.index_version["notes"]["pair_count"] == 81
-    assert report.index_version["chunk_count"] == 1824
+    assert report.index_version["chunk_count"] == 1818
 
 
 def test_report_on_empty_database_is_safe(db_session):

@@ -3,7 +3,7 @@ import math
 import pytest
 from sqlalchemy import func, select
 
-from app.db.models import ChunkVector, Formula, Herb
+from app.db.models import Acupoint, ChunkVector, Formula, Herb
 from app.embed import chunk, embedder, indexer
 
 
@@ -68,6 +68,19 @@ def test_long_herb_fields_are_clipped_for_retrieval():
     text = chunk.herb_chunk_text(h)
     assert len(text) < 700, f"切片未设长度上限：{len(text)}"
     assert text.endswith("…")
+
+
+def test_acupoint_chunk_keeps_symptom_labels_when_actions_exist(db_session, corpus):
+    """FR-9：症状→穴不能因为 actions 非空就丢掉治症分类标签（E3 S05 暴露）。"""
+    from app.etl import loaders
+
+    loaders.load_corpus(db_session, corpus)
+    weizhong = db_session.scalar(select(Acupoint).where(Acupoint.name == "委中"))
+    texts = {c.ref_id: c.content for c in chunk.build_chunks(db_session)
+             if c.ref_type == "acupoint"}
+    text = texts[weizhong.id]
+    assert "背痛" in text, "原文主治（actions）必须保留"
+    assert "腰背痛" in text and "皮肤/疮疡" in text, "治症分类标签必须进切片"
 
 
 def test_indexer_writes_chunks_idempotently_with_stable_keys(db_session, corpus):

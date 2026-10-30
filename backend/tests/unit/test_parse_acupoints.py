@@ -102,7 +102,25 @@ def test_real_symptom_corpus_and_the_cough_gap():
     from app.config import settings
     text = (settings.distilled_dir / "05-针灸" / "针灸治症取穴.md").read_text(encoding="utf-8")
     syms = parse_acupoints.parse_symptoms(text)
-    # 一(3) + 二(41 行→43 条，含一穴多主题) + 三(8 行八脉交会) = 54
-    assert len(syms) == 54
+    # 一(3) + 二(41 行→42 条，含一穴多主题；`十井(少商/商阳等)` 曾因括号内 `/` 被误拆成两条) + 三(8) = 53
+    assert len(syms) == 53
     # PIPELINE §4.4 的硬事实：治症取穴里没有咳/喘专节 → D 类必须走特例分支
     assert not [s for s in syms if s.symptom in ("咳", "喘", "咳嗽", "气喘")]
+
+
+PAREN = """
+## 二、按症状归类常用穴
+
+### 急救/放血
+
+| 穴位 | 原文相关主治 |
+|---|---|
+| 水沟(人中) | 昏迷、晕厥 |
+| 十井(少商/商阳等) | 发热、昏迷放血 |
+"""
+
+
+def test_parse_symptoms_respects_parentheses_and_strips_alias_notes():
+    """`十井(少商/商阳等)` 不能被 `/` 切成两个碎片；括号是别名注，不进入穴名。"""
+    points = [s.point for s in parse_acupoints.parse_symptoms(PAREN)]
+    assert points == ["水沟", "十井"]

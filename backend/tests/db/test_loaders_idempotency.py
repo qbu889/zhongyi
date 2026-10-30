@@ -1,6 +1,8 @@
 from sqlalchemy import func, select
 
 from app.db.models import (
+    Acupoint,
+    AcupointSymptom,
     Case,
     Formula,
     FormulaAlias,
@@ -96,6 +98,23 @@ def test_unresolved_herb_text_is_kept_and_queryable(db_session, corpus):
     linked = db_session.scalar(
         select(func.count()).select_from(FormulaItem).where(FormulaItem.herb_id.isnot(None)))
     assert linked > 1500
+
+
+def test_symptom_labels_do_not_create_phantom_acupoints(db_session, corpus):
+    """症状表首列不全是穴名：别名必须回指正名，碎片必须丢弃并计数，
+    不能靠伪造 meridian=None 的穴位行把数据「补全」到 352 行。"""
+    summary = loaders.load_corpus(db_session, corpus)
+    assert db_session.scalar(select(func.count()).select_from(Acupoint)) == 346
+    names = set(db_session.scalars(select(Acupoint.name)))
+    assert names.isdisjoint({"十井", "天地人三皇", "月穴与京门"})
+    assert summary.skipped.get("acupoint_symptom") == 4
+    assert summary.counts["acupoint_symptom"] == 49
+
+    water = db_session.scalar(select(Acupoint).where(Acupoint.name == "水沟"))
+    taichong = db_session.scalar(select(Acupoint).where(Acupoint.name == "太冲"))
+    links = {(s.acupoint_id, s.symptom) for s in db_session.scalars(select(AcupointSymptom))}
+    assert (water.id, "急救/放血") in links
+    assert (taichong.id, "四肢/关节") in links
 
 
 def test_pair_formulas_get_components_and_are_not_cross_checked(db_session, corpus):

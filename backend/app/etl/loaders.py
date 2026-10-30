@@ -275,15 +275,9 @@ def load_corpus(session: Session, corpus) -> LoadSummary:
                          "treatment_formula_ids", "added_herbs", "tips", "raw_md")})
     summary.counts["case"] = len(case_rows)
 
-    # ---- acupoint（症状表引用的穴名若不在穴位库，补 meridian=None 的行，不丢数据）----
+    # ---- acupoint（只收穴位库的 346 行；症状表里的碎片穴名不得伪造穴位）----
     acupoint_rows = [{"name": p.name, "meridian": p.meridian, "role": "·".join(p.roles),
                       "location": p.location, "actions": p.actions} for p in corpus["acupoints"]]
-    known = {p["name"] for p in acupoint_rows}
-    for s in corpus["acupoint_symptoms"]:
-        if s.point not in known:
-            acupoint_rows.append({"name": s.point, "meridian": None, "role": "",
-                                  "location": "", "actions": ""})
-            known.add(s.point)
     _insert(session, models.Acupoint, acupoint_rows, ["name", "meridian"],
             lambda ex: {"role": ex.role, "location": ex.location, "actions": ex.actions})
     acupoint_id = _key_map(session, models.Acupoint, ["name"])

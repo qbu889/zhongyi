@@ -37,7 +37,7 @@ from app.etl import (
 from app.git_utils import distilled_commit_hash
 
 EMBEDDING_MODEL_VERSION = "hashing-2026.10"     # 真实模型由调用方传入 bge-m3@...
-CHUNKING_VERSION = "chunk-2026.10"
+CHUNKING_VERSION = "chunk-2026.10.1"   # .1：穴位切片补治症标签（E3 基线暴露）
 EXTRACT_RULE_VERSION = "identity-2026.10"
 
 _HERB_DOCS = ("04-神农本草经/中药库.md", "04-神农本草经/药物按味归类.md")

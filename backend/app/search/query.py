@@ -11,6 +11,7 @@ from app.etl import identity
 from app.etl.normalizers import norm
 
 _WS = re.compile(r"\s+")
+_CJK_WS = re.compile(r"(?<=[一-鿿])\s+(?=[一-鿿])")
 _ALNUM = re.compile(r"[a-zA-Z0-9]+")
 _CJK_RUN = re.compile(r"[一-鿿]+")
 
@@ -32,7 +33,8 @@ class Hit:
 
 
 def normalize_query(q: str) -> str:
-    return _WS.sub(" ", norm(q or "").strip())
+    # 中文词之间没有空格语义：`桂枝 汤` 必须命中 `桂枝汤`；拉丁词之间的空格保留。
+    return _WS.sub(" ", _CJK_WS.sub("", norm(q or "").strip()))
 
 
 def formula_query(q: str) -> str:

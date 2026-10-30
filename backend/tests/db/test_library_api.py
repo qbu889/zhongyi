@@ -144,7 +144,7 @@ def test_acupoint_detail_keeps_symptom_source(indexed):
 def test_acupoint_404_and_empty_symptom_guard(indexed):
     assert indexed.get("/api/acupoints/999999").status_code == 404
     # 空串不能让 contains 命中全部穴位
-    assert indexed.get("/api/acupoints", params={"symptom": ""}).json()["total"] == 352
+    assert indexed.get("/api/acupoints", params={"symptom": ""}).json()["total"] == 346
 
 
 # ---------- FR-10 医案 ----------

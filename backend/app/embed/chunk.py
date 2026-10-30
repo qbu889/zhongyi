@@ -94,13 +94,18 @@ def case_chunk_text(no: str, category, chief, pathogenesis, treatment) -> str:
     return "｜".join(parts)
 
 
-def acupoint_chunk_text(name: str, meridian, roles: list[str], actions: str) -> str:
+def acupoint_chunk_text(name: str, meridian, roles: list[str], actions: str,
+                        symptoms=()) -> str:
     parts = [name]
     if meridian:
         parts.append(meridian)
     if roles:
         parts.append("角色：" + "·".join(roles))
-    parts.append(f"主治：{actions or '未载'}")
+    labels = sorted(set(symptoms))
+    # 无症状标签的穴保持原样；有标签的穴（如委中）必须两条都出现，不能因 actions 非空丢治症分类。
+    parts.append(f"主治：{actions or '、'.join(labels) or '未载'}")
+    if actions and labels:
+        parts.append("治症：" + "、".join(labels))
     return "｜".join(parts)
 
 
@@ -132,7 +137,7 @@ def build_chunks_from_rows(*, herbs, formulas, evidence, cases, frameworks, acup
 
     元素形态：formulas=(name, kind, items, source_lines)、evidence=(name, six_jing, bing_duan, original)、
     cases=(no, category, chief, pathogenesis, treatment)、frameworks=(doc, section, content)、
-    acupoints=(name, meridian, roles, actions)。
+    acupoints=(name, meridian, roles, actions, symptoms)。
     """
     out: list[Chunk] = []
     for ref_id, h in enumerate(herbs):
@@ -202,8 +207,8 @@ def build_chunks(session) -> list[Chunk]:
         symptoms_by_point.setdefault(s.acupoint_id, []).append(s.symptom)
     for a in session.scalars(select(Acupoint).order_by(Acupoint.id)):
         roles = [r for r in (a.role or "").split("·") if r]
-        actions = a.actions or ("治：" + "、".join(sorted(set(symptoms_by_point.get(a.id, []))))
-                                if symptoms_by_point.get(a.id) else "")
-        out.append(Chunk("acupoint", a.id, 0, acupoint_chunk_text(a.name, a.meridian, roles, actions)))
+        labels = sorted(set(symptoms_by_point.get(a.id, [])))
+        out.append(Chunk("acupoint", a.id, 0,
+                         acupoint_chunk_text(a.name, a.meridian, roles, a.actions, labels)))
 
     return out
