@@ -16,6 +16,7 @@ def indexed(db_session):
     ("桂枝", Intent.herb),
     ("牡桂", Intent.herb),
     ("风池", Intent.acupoint),
+    ("风池穴怎么用", Intent.acupoint),             # 裸名 + 「穴」后缀也算穴位
     ("咳嗽气喘按什么穴", Intent.acupoint),
     ("问11", Intent.case),
     ("咳嗽气喘痰白不能平躺", Intent.syndrome),
@@ -30,5 +31,7 @@ def test_mentions_picks_longest_name_inside_sentence(indexed):
     found = mentions(indexed, "桂枝加葛根汤配合风池穴")
     assert found["formula"][1] == "桂枝加葛根汤"
     assert found["acupoint"][1] == "风池"
+    # 排除 `加减写法` 别名：否则 27 个桂枝汤加减方都以「桂枝汤」命中，母方被随机挤掉
+    assert mentions(indexed, "桂枝汤")["formula"][1] == "桂枝汤"
     # 别名也算命中，但返回正名：桂枝 → 牡桂（FR-8）
     assert mentions(indexed, "桂枝")["herb"][1] == "牡桂"

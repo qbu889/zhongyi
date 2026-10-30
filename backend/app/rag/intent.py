@@ -31,7 +31,8 @@ def _best_mention(q: str, rows):
             if alias and alias in q]
     if not pool:
         return None
-    _, rid, canonical = max(pool, key=lambda item: len(item[0]))
+    # 最长名优先；等长时按别名、再按最小 id 兜底，避免 set/hash 顺序导致结果漂移。
+    _, rid, canonical = min(pool, key=lambda item: (-len(item[0]), item[0], item[1]))
     return rid, canonical
 
 
@@ -77,7 +78,9 @@ def classify(session, query: str) -> Intent:
     if "herb" in found:
         return Intent.herb
     point = found.get("acupoint")
-    # 穴位名常是普通词的前缀（太阳穴 vs 太阳病）：裸名必须整句相等，否则要显式取穴线索
-    if (point is not None and q == point[1]) or _ACUPOINT_CUE.search(q):
+    # 穴位名常是普通词的前缀（太阳穴 vs 太阳病）：裸名须整句相等或带「穴」后缀，
+    # 否则要显式取穴线索。「太阳病」不含「太阳穴」，不会误触。
+    if (point is not None and (q == point[1] or f"{point[1]}穴" in q)) \
+            or _ACUPOINT_CUE.search(q):
         return Intent.acupoint
     return Intent.syndrome
