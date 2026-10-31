@@ -13,7 +13,7 @@ const PAIR_DIFF_LABELS: Record<string, string> = {
   missing_in_ancient: "仅克数本有",
 };
 
-function VariantTable({ variant, mode }: { variant: FormulaVariant; mode: DoseMode }) {
+export function VariantTable({ variant, mode }: { variant: FormulaVariant; mode: DoseMode }) {
   return (
     <div className="mt-3 overflow-x-auto">
       <p className="text-xs text-ink/60">{variant.source_doc}</p>
@@ -33,7 +33,7 @@ function VariantTable({ variant, mode }: { variant: FormulaVariant; mode: DoseMo
               <tr key={`${variant.id}-${index}`} className="border-b border-line/60">
                 <td className="py-1 pr-2">{item.herb_text}</td>
                 {mode === "gram" && (
-                  <td className="py-1 pr-2"
+                  <td data-testid="dose-cell" className="py-1 pr-2"
                     title={item.conversion_note ?? DOSE_STATE_LABELS[item.dose_state] ?? item.dose_state}>
                     <span className={cell.tone === "approx" ? "text-cinnabar" : undefined}>
                       {cell.text}

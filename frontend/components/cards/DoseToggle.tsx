@@ -9,6 +9,7 @@ export function DoseToggle({ mode, onChange }: { mode: DoseMode; onChange: (mode
     <label className="flex items-center gap-2 text-sm">
       古制
       <Switch.Root
+        data-testid="dose-toggle"
         checked={mode === "ancient"}
         aria-label="古制"
         onCheckedChange={(checked) => onChange(checked ? "ancient" : "gram")}
