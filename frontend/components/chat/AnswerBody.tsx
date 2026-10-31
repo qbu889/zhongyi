@@ -1,5 +1,6 @@
 "use client";
 
+import { Cards } from "@/components/cards/Cards";
 import { citationKey, numberCitations, numbersForLine, unmatchedCitations } from "@/lib/citations";
 import type { Answer, Citation } from "@/lib/types";
 
@@ -57,6 +58,7 @@ export function AnswerBody({
         </p>
       )}
       {answer.general_note && <GeneralNote text={answer.general_note} />}
+      {answer.status === "answered" && <Cards citations={answer.citations} />}
       <p className="mt-3 text-xs text-ink/60">{answer.disclaimer}</p>
     </div>
   );
