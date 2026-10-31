@@ -127,3 +127,43 @@ def test_delete_session_keeps_qa_log_but_drops_messages(indexed_client, db_sessi
     assert db_session.scalar(select(func.count()).select_from(QaLog)) == 1
     assert db_session.scalar(select(QaLog.session_id)) is None
     assert indexed_client.delete("/api/chat/999999").status_code == 404
+
+
+import json
+
+
+def _events(text: str) -> list[tuple[str, dict]]:
+    out = []
+    for frame in text.split("\n\n"):
+        if not frame.strip():
+            continue
+        event, data = "message", []
+        for line in frame.splitlines():
+            if line.startswith("event: "):
+                event = line[7:]
+            elif line.startswith("data: "):
+                data.append(line[6:])
+        if data:
+            out.append((event, json.loads("\n".join(data))))
+    return out
+
+
+def test_sse_emits_progress_before_citations(indexed_client):
+    with indexed_client.stream("POST", "/api/chat/stream",
+                               json={"question": "桂枝汤"}) as r:
+        events = _events("".join(r.iter_text()))
+
+    names = [name for name, _ in events]
+    assert names[:2] == ["meta", "progress"]
+    assert names.index("progress") < names.index("citation")
+    progress = events[1][1]
+    assert progress["total"] >= 1
+    assert progress["total"] == sum(progress["by_type"].values())
+
+
+def test_sse_reports_index_error_as_event(client):
+    with client.stream("POST", "/api/chat/stream", json={"question": "桂枝汤"}) as r:
+        assert r.status_code == 200
+        events = _events("".join(r.iter_text()))
+    assert events and events[0][0] == "error"
+    assert events[0][1]["code"] == "index_not_ready"

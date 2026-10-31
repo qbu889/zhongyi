@@ -123,7 +123,7 @@ def history(session_id: int, session: Session = Depends(get_session)):
 @router.post("/stream")
 def chat_stream(payload: ChatRequest, session: Session = Depends(get_session)):
     def gen():
-        yield from stream_events(session, payload.question, session_id=payload.session_id)
-        session.commit()
+        yield from stream_events(session, payload.question,
+                                 session_id=payload.session_id)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
