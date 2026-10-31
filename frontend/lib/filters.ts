@@ -31,3 +31,17 @@ export function pageHref(path: string, params: URLSearchParams, page: number): s
   const query = next.toString();
   return query ? `${path}?${query}` : path;
 }
+
+export function paramsFrom(
+  raw: Record<string, string | string[] | undefined>,
+): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(raw)) {
+    if (Array.isArray(value)) {
+      for (const item of value) if (item) params.append(key, item);
+    } else if (value) {
+      params.set(key, value);
+    }
+  }
+  return params;
+}
