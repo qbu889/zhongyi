@@ -37,6 +37,15 @@ export function CaseDetailView({ caseItem }: { caseItem: CaseDetail }) {
         {caseItem.added_herbs.length > 0 && (
           <p className="mt-1 text-sm">加味：{caseItem.added_herbs.join("、")}</p>
         )}
+        {caseItem.category && (
+          <p className="mt-1 text-sm">
+            关联：
+            <Link className="text-cinnabar underline"
+              href={`/cases?category=${encodeURIComponent(caseItem.category)}`}>
+              同病类医案
+            </Link>
+          </p>
+        )}
       </section>
 
       <section aria-labelledby="tips-heading">

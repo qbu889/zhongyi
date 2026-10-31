@@ -140,6 +140,8 @@ describe("library detail views", () => {
     expect(screen.getByText("头痛")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "就本条提问" }))
       .toHaveAttribute("href", "/chat?ref=acupoint:3");
+    expect(decodeURIComponent(screen.getByRole("link", { name: "同经穴位" })
+      .getAttribute("href") ?? "")).toBe("/acupoints?meridian=手阳明大肠经");
   });
 
   it("case detail keeps question/answer/treatment/tips and the raw text", () => {
@@ -148,6 +150,8 @@ describe("library detail views", () => {
     expect(screen.getByRole("link", { name: "射干麻黄汤" }))
       .toHaveAttribute("href", "/formulas/61");
     expect(screen.getByText("加味：桔梗")).toBeInTheDocument();
+    expect(decodeURIComponent(screen.getByRole("link", { name: "同病类医案" })
+      .getAttribute("href") ?? "")).toBe("/cases?category=咳嗽");
     expect(screen.getByText("服西药多年不愈")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "就本条提问" }))
       .toHaveAttribute("href", "/chat?ref=case:11");

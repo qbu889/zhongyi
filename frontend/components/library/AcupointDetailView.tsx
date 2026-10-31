@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import type { AcupointDetail } from "@/lib/types";
 
 import { DetailFrame } from "./DetailFrame";
@@ -16,6 +18,16 @@ export function AcupointDetailView({ point }: { point: AcupointDetail }) {
         <dt className="text-ink/70">症状数</dt>
         <dd>{point.symptom_count}</dd>
       </dl>
+
+      {point.meridian && (
+        <p className="mt-1 text-sm">
+          关联：
+          <Link className="text-cinnabar underline"
+            href={`/acupoints?meridian=${encodeURIComponent(point.meridian)}`}>
+            同经穴位
+          </Link>
+        </p>
+      )}
 
       <section aria-labelledby="symptoms-heading">
         <h2 id="symptoms-heading" className="font-serif text-lg font-semibold">按症取穴记录</h2>
