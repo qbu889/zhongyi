@@ -13,24 +13,28 @@ export interface IntakeDraft {
   questions: IntakeField[];
 }
 
-const KEYWORDS: Record<string, string[]> = {
-  额凉手足温: ["额凉", "手足温", "手足冷"],
-  胃口: ["胃口", "纳差", "食欲", "不想吃"],
-  睡眠: ["睡眠", "失眠", "多梦", "易醒"],
-  大便: ["大便", "便秘", "腹泻", "便溏"],
-  小便: ["小便", "尿频", "夜尿", "尿少"],
-  精神: ["精神", "乏力", "疲倦", "疲乏"],
-  脉: ["脉浮", "脉沉", "脉数", "脉细", "脉弦"],
-  寒热: ["恶寒", "怕冷", "畏寒", "发热", "发烧", "寒热"],
-  汗: ["汗出", "无汗", "自汗", "盗汗", "出汗"],
-  头身: ["头痛", "头项", "身痛", "项强", "眩晕"],
-  便: ["大便", "便秘", "腹泻", "便溏"],
-  饮: ["口渴", "饮水", "口干", "不渴"],
-  胸: ["胸闷", "胸痛", "心悸", "胁痛"],
-  冷: ["手足冷", "四肢冷", "畏寒肢冷"],
-  别: ["月经", "经期", "带下"],
-  妇: ["月经", "经期", "带下", "产后"],
-  声: ["声低", "声嘶", "懒言"],
+type Polarity = "normal" | "abnormal";
+
+// 每个 token 带极性；同一 key 内异常词排在正常词之前，显式异常优先命中。
+// 已移除「胃口/精神/大便/小便/睡眠/脉」等裸词，避免「胃口好」「大便正常」被强制判为异常。
+const KEYWORDS: Record<string, [string, Polarity][]> = {
+  额凉手足温: [["手足冷", "abnormal"], ["额凉", "normal"], ["手足温", "normal"]],
+  胃口: [["纳差", "abnormal"], ["不想吃", "abnormal"], ["食欲不振", "abnormal"], ["胃口好", "normal"], ["食欲好", "normal"]],
+  睡眠: [["失眠", "abnormal"], ["多梦", "abnormal"], ["易醒", "abnormal"], ["睡眠正常", "normal"]],
+  大便: [["便秘", "abnormal"], ["腹泻", "abnormal"], ["便溏", "abnormal"], ["大便正常", "normal"]],
+  小便: [["尿频", "abnormal"], ["夜尿", "abnormal"], ["尿少", "abnormal"], ["小便正常", "normal"]],
+  精神: [["乏力", "abnormal"], ["疲倦", "abnormal"], ["疲乏", "abnormal"], ["精神好", "normal"]],
+  脉: [["脉浮", "abnormal"], ["脉沉", "abnormal"], ["脉数", "abnormal"], ["脉细", "abnormal"], ["脉弦", "abnormal"]],
+  寒热: [["恶寒", "abnormal"], ["怕冷", "abnormal"], ["畏寒", "abnormal"], ["发热", "abnormal"], ["发烧", "abnormal"], ["寒热", "abnormal"]],
+  汗: [["汗出", "abnormal"], ["无汗", "abnormal"], ["自汗", "abnormal"], ["盗汗", "abnormal"], ["出汗", "abnormal"]],
+  头身: [["头痛", "abnormal"], ["头项", "abnormal"], ["身痛", "abnormal"], ["项强", "abnormal"], ["眩晕", "abnormal"]],
+  便: [["便秘", "abnormal"], ["腹泻", "abnormal"], ["便溏", "abnormal"]],
+  饮: [["口渴", "abnormal"], ["饮水", "abnormal"], ["口干", "abnormal"], ["不渴", "normal"]],
+  胸: [["胸闷", "abnormal"], ["胸痛", "abnormal"], ["心悸", "abnormal"], ["胁痛", "abnormal"]],
+  冷: [["手足冷", "abnormal"], ["四肢冷", "abnormal"], ["畏寒肢冷", "abnormal"]],
+  别: [["月经", "abnormal"], ["经期", "abnormal"], ["带下", "abnormal"]],
+  妇: [["月经", "abnormal"], ["经期", "abnormal"], ["带下", "abnormal"], ["产后", "abnormal"]],
+  声: [["声低", "abnormal"], ["声嘶", "abnormal"], ["懒言", "abnormal"]],
 };
 
 export const TRI_LABELS: Record<Exclude<TriState, "">, string> = {
@@ -40,9 +44,9 @@ export const TRI_LABELS: Record<Exclude<TriState, "">, string> = {
 };
 
 function field(key: string, text: string): IntakeField {
-  const word = (KEYWORDS[key] ?? []).find((item) => text.includes(item));
-  return word
-    ? { key, state: "abnormal", note: word, source: "typed" }
+  const hit = (KEYWORDS[key] ?? []).find(([word]) => text.includes(word));
+  return hit
+    ? { key, state: hit[1], note: hit[0], source: "typed" }
     : { key, state: "", note: "", source: null };
 }
 

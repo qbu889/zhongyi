@@ -48,6 +48,29 @@ export async function streamChat(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let sawTerminal = false;
+
+  const handleFrame = (frame: string) => {
+    const parsed = parseSseFrame(frame);
+    if (!parsed) return;
+    switch (parsed.event) {
+      case "meta": handlers.onMeta?.(parsed.data as MetaEvent); break;
+      case "progress": handlers.onProgress?.(parsed.data as Progress); break;
+      case "citation": handlers.onCitation?.(parsed.data as Citation); break;
+      case "token": handlers.onToken?.((parsed.data as { text: string }).text); break;
+      case "done":
+        sawTerminal = true;
+        handlers.onDone?.(parsed.data as ChatResponse);
+        break;
+      case "error":
+        sawTerminal = true;
+        handlers.onError?.(parsed.data as { code: string; message: string });
+        break;
+      default: break;
+    }
+  };
+
+  // 用户主动中止（AbortError）会从 reader.read()/fetch 直接抛出，保持原样向上传递。
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -56,19 +79,13 @@ export async function streamChat(
     while (index >= 0) {
       const frame = buffer.slice(0, index);
       buffer = buffer.slice(index + 2);
-      const parsed = parseSseFrame(frame);
-      if (parsed) {
-        switch (parsed.event) {
-          case "meta": handlers.onMeta?.(parsed.data as MetaEvent); break;
-          case "progress": handlers.onProgress?.(parsed.data as Progress); break;
-          case "citation": handlers.onCitation?.(parsed.data as Citation); break;
-          case "token": handlers.onToken?.((parsed.data as { text: string }).text); break;
-          case "done": handlers.onDone?.(parsed.data as ChatResponse); break;
-          case "error": handlers.onError?.(parsed.data as { code: string; message: string }); break;
-          default: break;
-        }
-      }
+      handleFrame(frame);
       index = buffer.indexOf("\n\n");
     }
   }
+
+  // 末尾没有空行收尾的残余帧（如 done/error）也要派发，再判断流是否正常结束。
+  buffer += decoder.decode();
+  if (buffer.trim()) handleFrame(buffer);
+  if (!sawTerminal) throw new ApiError("stream_truncated", "流式响应未正常结束", 0);
 }

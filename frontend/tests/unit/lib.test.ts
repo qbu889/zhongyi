@@ -1,12 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "@/lib/api";
 import { citationKey, numberCitations, numbersForLine, unmatchedCitations } from "@/lib/citations";
 import { doseCell } from "@/lib/dose";
 import { answerToMarkdown } from "@/lib/export";
 import { buildQuery, pageFrom, pageHref } from "@/lib/filters";
 import { formatIntakeSummary, prefillIntake } from "@/lib/intake";
-import { parseSseFrame } from "@/lib/sse";
-import type { Citation, Section } from "@/lib/types";
+import { parseSseFrame, streamChat } from "@/lib/sse";
+import type { Citation, MetaEvent, Section } from "@/lib/types";
 
 const citations: Citation[] = [
   { ref_type: "case", ref_id: 11, title: "问11", anchor: "医案#问11", snippet: "咳" },
@@ -60,14 +61,72 @@ describe("intake", () => {
     expect(summary).toContain("主诉补充（问诊卡）");
     expect(summary).toContain("寒热=异常");
   });
+
+  it("labels explicit normal findings as normal, not abnormal", () => {
+    const draft = prefillIntake("不渴，手足温，胃口好，大便正常");
+    const byKey = [...draft.baselines, ...draft.questions];
+    for (const key of ["饮", "额凉手足温", "胃口", "大便"]) {
+      expect(byKey.find((f) => f.key === key)?.state).toBe("normal");
+    }
+    expect(byKey.filter((f) => f.state === "abnormal")).toEqual([]);
+    const summary = formatIntakeSummary(draft);
+    expect(summary).toContain("饮=正常");
+    expect(summary).not.toContain("饮=异常");
+  });
 });
 
+function sseResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
 describe("sse", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("parses event/data frames and ignores comments", () => {
     expect(parseSseFrame('event: meta\ndata: {"session_id":1}'))
       .toEqual({ event: "meta", data: { session_id: 1 } });
     expect(parseSseFrame("data: a\ndata: b")).toEqual({ event: "message", data: "a\nb" });
     expect(parseSseFrame(": ping")).toBeNull();
+  });
+
+  it("delivers frames split across chunks and resolves on done", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([
+      'event: meta\ndata: {"session_id":7,"intent":"B","status":"answered"}\n\nevent: token\ndata: {"text":"桂枝"}\n\nevent: tok',
+      // done 帧没有末尾空行，仍应被 flush 并视为正常结束
+      'en\ndata: {"text":"汤"}\n\nevent: done\ndata: {"session_id":7,"message_id":1,"answer":{}}',
+    ])));
+    const tokens: string[] = [];
+    let meta: MetaEvent | null = null;
+    let done: unknown = null;
+    await streamChat("q", null, {
+      onMeta: (value) => { meta = value; },
+      onToken: (text) => tokens.push(text),
+      onDone: (value) => { done = value; },
+    });
+    expect(meta).toMatchObject({ session_id: 7 });
+    expect(tokens.join("")).toBe("桂枝汤");
+    expect(done).toEqual({ session_id: 7, message_id: 1, answer: {} });
+  });
+
+  it("rejects a stream that ends without a terminal frame", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([
+      'event: meta\ndata: {"session_id":7,"intent":"B","status":"answered"}\n\n',
+    ])));
+    const error = await streamChat("q", null, {}).catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("stream_truncated");
   });
 });
 
