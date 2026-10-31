@@ -81,7 +81,7 @@ def _item(herb: Herb, formula_count: int) -> HerbListItem:
 @router.get("", response_model=HerbListResponse)
 def list_herbs(
     q: str | None = Query(default=None, max_length=100),
-    taste_group: str | None = Query(default=None, max_length=20),
+    taste_group: list[str] | None = Query(default=None),
     organ_group: str | None = Query(default=None, max_length=20),
     flavor_state: Literal["present", "missing"] | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
@@ -94,10 +94,15 @@ def list_herbs(
         # alias 是 ARRAY(Text)；展平后 contains 才能命中「现代名」元素
         stmt = stmt.where(or_(Herb.name.contains(q),
                               func.array_to_string(Herb.alias, "\u0001").contains(q)))
-    if taste_group == "未归":
-        stmt = stmt.where(Herb.taste_group.is_(None))
-    elif taste_group:
-        stmt = stmt.where(Herb.taste_group == taste_group)
+    groups = set(taste_group or [])
+    if groups:
+        conds = []
+        named = [g for g in groups if g != "未归"]
+        if named:
+            conds.append(Herb.taste_group.in_(named))
+        if "未归" in groups:
+            conds.append(Herb.taste_group.is_(None))
+        stmt = stmt.where(or_(*conds))
     if organ_group == "未归":
         stmt = stmt.where(Herb.organ_group.is_(None))
     elif organ_group:
