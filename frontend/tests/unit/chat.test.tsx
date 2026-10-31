@@ -159,8 +159,9 @@ describe("ChatPanel", () => {
   });
 
   it("marks an aborted turn as interrupted", async () => {
-    mockedStream.mockImplementation((_question, _sid, _handlers, signal) =>
+    mockedStream.mockImplementation((_question, _sid, handlers: SseHandlers, signal) =>
       new Promise((_resolve, reject) => {
+        handlers.onToken?.("部分回答");
         signal?.addEventListener("abort", () =>
           reject(new DOMException("Aborted", "AbortError")));
       }));
@@ -169,6 +170,106 @@ describe("ChatPanel", () => {
     await userEvent.click(await screen.findByRole("button", { name: "停止" }));
     expect(await screen.findByText("已中断")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    // spec §7.8：中断/失败后已流出 token 必须留在屏幕上。
+    expect(screen.getByTestId("stream-text")).toHaveTextContent("部分回答");
+  });
+
+  it("does not retry once a token has already streamed", async () => {
+    mockedStream.mockImplementation(async (_question, _sid, handlers: SseHandlers) => {
+      handlers.onToken?.("已流出");
+      throw new Error("network");
+    });
+    render(<ChatPanel />);
+    await userEvent.type(screen.getByTestId("composer"), "桂枝汤{Enter}");
+
+    // 已出 token 后失败只落到错误态，绝不自动重发（spec §7.8）。
+    expect(await screen.findByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(screen.getByTestId("message-assistant")).toHaveTextContent("生成失败");
+    expect(mockedStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries at most once when the network keeps failing", async () => {
+    mockedStream.mockRejectedValue(new Error("network"));
+    render(<ChatPanel />);
+    await userEvent.type(screen.getByTestId("composer"), "桂枝汤{Enter}");
+
+    expect(await screen.findByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(screen.getByTestId("message-assistant")).toHaveTextContent("生成失败");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockedStream).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the intake card once the summary is submitted", async () => {
+    let calls = 0;
+    mockedStream.mockImplementation(async (_question, _sid, handlers: SseHandlers) => {
+      calls += 1;
+      handlers.onDone?.(calls === 1
+        ? {
+          ...done,
+          answer: {
+            ...answer,
+            status: "needs_more_info",
+            sections: [],
+            followup: ["胃口如何？", "睡眠如何？", "大便如何？"],
+          },
+        }
+        : done);
+    });
+    render(<ChatPanel />);
+    await userEvent.type(screen.getByTestId("composer"), "我不舒服{Enter}");
+
+    const intake = await screen.findByTestId("intake-card");
+    const appetite = within(intake).getByRole("radiogroup", { name: "胃口" });
+    await userEvent.click(within(appetite).getByRole("radio", { name: "正常" }));
+    await userEvent.click(within(intake).getByRole("button", { name: "提交主诉补充" }));
+
+    await waitFor(() => expect(mockedStream).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("intake-card")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("intake-skip-note")).not.toBeInTheDocument();
+    expect(mockedStream.mock.calls[1]?.[0]).toMatch(/^主诉补充（问诊卡）：/);
+  });
+
+  it("renders a zero-hit progress line without the type breakdown", async () => {
+    mockedStream.mockImplementation(async (_question, _sid, handlers: SseHandlers) => {
+      handlers.onMeta?.({ session_id: 7, intent: "B", status: "answered" });
+      handlers.onProgress?.({ total: 0, by_type: {} });
+      handlers.onDone?.(done);
+    });
+    render(<ChatPanel />);
+    await userEvent.type(screen.getByTestId("composer"), "桂枝汤{Enter}");
+
+    const progress = await screen.findByTestId("progress");
+    expect(within(progress).getByText("命中 0 条本地证据")).toBeInTheDocument();
+    expect(progress.textContent).not.toContain("（");
+  });
+
+  it("dedupes citation events in the reducer and in the progress list", async () => {
+    const citation = {
+      ref_type: "formula", ref_id: 1, title: "桂枝汤", anchor: "sun-1", snippet: "组成",
+    };
+    const state = apply(initialChatState,
+      { type: "send", id: "t1", question: "桂枝汤" },
+      { type: "citation", id: "t1", citation },
+      { type: "citation", id: "t1", citation });
+    expect(state.turns[0].citations.length).toBe(1);
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    mockedStream.mockImplementation(async (_question, _sid, handlers: SseHandlers) => {
+      handlers.onProgress?.({ total: 1, by_type: { formula: 1 } });
+      handlers.onCitation?.(citation);
+      handlers.onCitation?.(citation);
+      await gate;
+      handlers.onDone?.(done);
+    });
+    render(<ChatPanel />);
+    await userEvent.type(screen.getByTestId("composer"), "桂枝汤{Enter}");
+
+    const progress = await screen.findByTestId("progress");
+    expect(within(progress).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(progress).getByRole("listitem")).toHaveTextContent("桂枝汤（sun-1）");
+    release();
+    await waitFor(() => expect(screen.getByTestId("answer-body")).toBeInTheDocument());
   });
 
   it("retries once when the network fails before the first token", async () => {

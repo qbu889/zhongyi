@@ -71,8 +71,10 @@ export function ChatPanel({
               {turn.progress && (
                 <RetrievalProgress progress={turn.progress} citations={turn.citations} />
               )}
-              {turn.phase === "streaming" && !turn.answer && (
-                <p className="mt-2 whitespace-pre-wrap text-sm">{turn.streamText}</p>
+              {!turn.answer && (turn.phase === "streaming"
+                || turn.phase === "interrupted"
+                || turn.phase === "error") && (
+                <p data-testid="stream-text" className="mt-2 whitespace-pre-wrap text-sm">{turn.streamText}</p>
               )}
               {turn.answer?.status === "refused" && (
                 <RefusalCard answer={turn.answer} question={turn.question}
