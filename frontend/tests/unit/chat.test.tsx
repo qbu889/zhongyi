@@ -1,11 +1,14 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { chatReducer, initialChatState, type ChatAction, type ChatState } from "@/lib/chatReducer";
 import { streamChat, type SseHandlers } from "@/lib/sse";
 import type { Answer } from "@/lib/types";
+
+import { server } from "../msw/server";
 
 // Task 11 起 ChatPanel 会挂载 SessionSidebar，后者使用 useRouter()：jsdom 下不打桩会抛
 // “invariant expected app router to be mounted”。仅补模块桩，不动任何断言。
@@ -318,5 +321,37 @@ describe("ChatPanel", () => {
     await userEvent.type(composer, "第一行{Shift>}{Enter}{/Shift}第二行");
     expect(composer).toHaveValue("第一行\n第二行");
     expect(mockedStream).not.toHaveBeenCalled();
+  });
+
+  // spec §7.7「新建：跳 /chat」——站内回到 /chat 时面板不会重挂载，必须本地复位，
+  // 否则「新会话」里仍是上一个会话的轮次、侧栏还高亮着它。
+  it("clears the transcript and the current-session highlight for 新会话", async () => {
+    server.use(
+      http.get("/api/chat/sessions", () => HttpResponse.json({
+        total: 1, limit: 50, offset: 0,
+        items: [{ id: 7, title: "会话七", last_activity_at: "2026-10-31T10:00:00", message_count: 2 }],
+      })),
+    );
+    mockedStream.mockImplementation(async (_question, _sid, handlers: SseHandlers) => {
+      handlers.onMeta?.({ session_id: 7, intent: "B", status: "answered" });
+      handlers.onDone?.(done);
+    });
+    render(<ChatPanel />);
+    await userEvent.type(screen.getByTestId("composer"), "桂枝汤{Enter}");
+    await waitFor(() => expect(screen.getByTestId("answer-body")).toBeInTheDocument());
+
+    const sidebar = screen.getByTestId("session-sidebar");
+    const rowLink = await within(sidebar).findByRole("link", { name: "会话七" });
+    expect(rowLink).toHaveAttribute("aria-current", "page");
+    expect(within(screen.getByTestId("chat-transcript")).getAllByTestId("message-user")).toHaveLength(1);
+    expect(window.location.pathname).toBe("/chat/7");
+
+    await userEvent.click(within(sidebar).getByRole("link", { name: "新会话" }));
+
+    await waitFor(() => expect(
+      within(screen.getByTestId("chat-transcript")).queryByTestId("message-user"),
+    ).not.toBeInTheDocument());
+    expect(rowLink).not.toHaveAttribute("aria-current");
+    expect(window.location.pathname).toBe("/chat");
   });
 });

@@ -13,7 +13,7 @@ import { RefusalCard } from "@/components/chat/RefusalCard";
 import { SessionSidebar } from "@/components/chat/SessionSidebar";
 import { useChatTurn } from "@/components/chat/useChatTurn";
 import {
-  chatReducer, initialChatState, type ChatState, type Turn,
+  chatReducer, initialChatState, type ChatAction, type ChatState, type Turn,
 } from "@/lib/chatReducer";
 import type { Citation } from "@/lib/types";
 
@@ -26,6 +26,21 @@ function announcementFor(turn: Turn | undefined): string {
     case "interrupted": return "回答已中断";
     default: return "";
   }
+}
+
+// chatReducer 里唯一的整体复位动作是 hydrate（§7.7「新建：跳 /chat」）。它的类型标注
+// `sessionId: number` 比运行时更严——reducer 只是把它写入 ChatState.sessionId（number | null）。
+// 裁决要求不改 reducer，故只在调用处显式放宽这一处。
+const NEW_SESSION_ACTION = {
+  type: "hydrate",
+  sessionId: null,
+  turns: [],
+} as unknown as ChatAction;
+
+function historyState(): unknown {
+  // replaceState 必须带上 Next 写在 history entry 上的路由数据；传 null 会把它抹掉，
+  // 于是地址栏与 router.state 脱钩，站内「新会话」退化成同树导航。
+  return { ...(window.history.state ?? {}) };
 }
 
 export function ChatPanel({
@@ -56,19 +71,40 @@ export function ChatPanel({
   }, [run, state.pending, state.sessionId]);
 
   useEffect(() => {
-    if (!state.sessionId) return;
-    const path = `/chat/${state.sessionId}`;
-    if (window.location.pathname !== path) {
-      window.history.replaceState(null, "", path);
+    const pathname = window.location.pathname;
+    if (state.sessionId === null) {
+      // 复位到「新会话」后地址栏已是 /chat：什么也不做（不写回、不刷 history）。
+      if (pathname === "/chat") return;
+      // 仍停在 /chat/<id>（侧栏与 router 状态脱钩的兜底）：写回 /chat。
+      // 有轮次在飞时绝不改 URL，也绝不动这一轮的数据。
+      if (state.pending || !/^\/chat\/\d+$/.test(pathname)) return;
+      window.history.replaceState(historyState(), "", "/chat");
+      return;
     }
-  }, [state.sessionId]);
+    const path = `/chat/${state.sessionId}`;
+    if (pathname !== path) {
+      window.history.replaceState(historyState(), "", path);
+    }
+  }, [state.pending, state.sessionId]);
+
+  // 侧栏「新会话」的本地复位：站内跳转不会重挂载面板，reducer 会留着上一个会话的轮次
+  // 与 sessionId（spec §7.7 的「新建」要求空转录 + 侧栏取消高亮）。
+  const startNewSession = useCallback(() => {
+    if (state.pending) return;
+    dispatch(NEW_SESSION_ACTION);
+    const pathname = window.location.pathname;
+    if (/^\/chat\/\d+$/.test(pathname)) {
+      window.history.replaceState(historyState(), "", "/chat");
+    }
+  }, [state.pending]);
 
   const lastTurn = state.turns[state.turns.length - 1];
   const announcement = announcementFor(lastTurn);
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6 px-4 py-4 md:grid-cols-[240px_1fr]">
-      <SessionSidebar currentId={state.sessionId} refreshKey={sidebarKey} />
+      <SessionSidebar currentId={state.sessionId} refreshKey={sidebarKey}
+        onNewSession={startNewSession} />
       <div>
         <h1 className="sr-only">对话</h1>
         <div data-testid="chat-transcript">

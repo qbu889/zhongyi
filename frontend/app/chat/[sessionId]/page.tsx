@@ -11,6 +11,8 @@ export default async function SessionPage({
   params: Promise<{ sessionId: string }>;
 }) {
   const { sessionId } = await params;
+  // 只接受纯数字段：Number() 会放行 "0x10" / "1e2" / " 5 " 这类写法，必须先把它们挡在 notFound()。
+  if (!/^\d+$/.test(sessionId)) notFound();
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) notFound();
 

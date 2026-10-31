@@ -10,14 +10,22 @@ import type { SessionItem } from "@/lib/types";
 export function SessionSidebar({
   currentId,
   refreshKey = 0,
+  onNewSession,
 }: {
   currentId: number | null;
   refreshKey?: number;
+  // 「新会话」被点时让父级面板复位状态。不 preventDefault：路由同步时
+  // 仍然走真实的 /chat 服务端导航（spec §7.7）。
+  onNewSession?: () => void;
 }) {
   const router = useRouter();
   const [items, setItems] = useState<SessionItem[]>([]);
   const [confirming, setConfirming] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
+  // 删除在飞中的会话 id：只允许一个 DELETE，避免双击重复删除。
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  // 删除失败：行留在确认态并给出行内错误，用户可重试或取消。
+  const [deleteFailed, setDeleteFailed] = useState(false);
 
   const load = useCallback(() => {
     getSessions()
@@ -28,7 +36,18 @@ export function SessionSidebar({
   useEffect(load, [load, refreshKey]);
 
   async function remove(id: number) {
-    await deleteSession(id);
+    if (deletingId !== null) return;
+    setDeletingId(id);
+    setDeleteFailed(false);
+    try {
+      await deleteSession(id);
+    } catch {
+      // 失败兜底：不 push、不 refresh、不重载列表，否则用户会以为删成功了。
+      setDeleteFailed(true);
+      return;
+    } finally {
+      setDeletingId(null);
+    }
     setConfirming(null);
     if (id === currentId) {
       router.push("/chat");
@@ -41,7 +60,7 @@ export function SessionSidebar({
     <aside aria-label="会话列表" data-testid="session-sidebar" className="text-sm">
       <div className="flex items-center justify-between">
         <h2 className="font-serif text-base">历史会话</h2>
-        <Link href="/chat" className="text-cinnabar underline">新会话</Link>
+        <Link href="/chat" onClick={onNewSession} className="text-cinnabar underline">新会话</Link>
       </div>
       {failed && (
         <p className="mt-2 text-cinnabar">
@@ -64,16 +83,20 @@ export function SessionSidebar({
               {new Date(item.last_activity_at).toLocaleString("zh-CN")} · {item.message_count} 条
             </p>
             {confirming === item.id ? (
-              <span className="mt-1 flex gap-2 text-xs">
+              <span className="mt-1 flex flex-wrap items-center gap-2 text-xs">
                 确认删除？
                 <button type="button" onClick={() => remove(item.id)}
-                  className="text-cinnabar underline">确认</button>
-                <button type="button" onClick={() => setConfirming(null)}
-                  className="underline">取消</button>
+                  disabled={deletingId !== null}
+                  className="text-cinnabar underline disabled:cursor-not-allowed">确认</button>
+                <button type="button"
+                  onClick={() => { setConfirming(null); setDeleteFailed(false); }}
+                  disabled={deletingId !== null}
+                  className="underline disabled:cursor-not-allowed">取消</button>
+                {deleteFailed && <span role="alert" className="text-cinnabar">删除失败</span>}
               </span>
             ) : (
               <button type="button" aria-label={`删除会话 ${item.title}`}
-                onClick={() => setConfirming(item.id)}
+                onClick={() => { setDeleteFailed(false); setConfirming(item.id); }}
                 className="mt-1 text-xs text-ink/50 underline">删除</button>
             )}
           </li>
