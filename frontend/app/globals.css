@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f6f1e7;
+  --color-ink: #1f2328;
+  --color-cinnabar: #a23b2a;
+  --color-line: #d8cdb8;
+  --color-azurite: #2f5d8a;
+  --font-sans: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-serif: "Songti SC", "Noto Serif CJK SC", serif;
+}
+
+@layer base {
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--color-cinnabar);
+    outline-offset: 2px;
+  }
+}
