@@ -6,8 +6,6 @@ import { useState } from "react";
 import {
   formatIntakeSummary,
   prefillIntake,
-  SEVEN_BASELINES,
-  TEN_QUESTIONS,
   TRI_LABELS,
   type IntakeDraft,
   type IntakeField,
