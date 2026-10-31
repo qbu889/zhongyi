@@ -41,7 +41,7 @@ export type ChatAction =
   | { type: "interrupt"; id: string }
   | { type: "skip_intake"; id: string }
   | { type: "submit_intake"; id: string }
-  | { type: "hydrate"; sessionId: number; turns: Turn[] };
+  | { type: "hydrate"; sessionId: number | null; turns: Turn[] };
 
 function phaseFor(status: AnswerStatus): TurnPhase {
   if (status === "refused") return "refused";

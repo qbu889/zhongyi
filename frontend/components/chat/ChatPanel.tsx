@@ -13,7 +13,7 @@ import { RefusalCard } from "@/components/chat/RefusalCard";
 import { SessionSidebar } from "@/components/chat/SessionSidebar";
 import { useChatTurn } from "@/components/chat/useChatTurn";
 import {
-  chatReducer, initialChatState, type ChatAction, type ChatState, type Turn,
+  chatReducer, initialChatState, type ChatState, type Turn,
 } from "@/lib/chatReducer";
 import type { Citation } from "@/lib/types";
 
@@ -27,15 +27,6 @@ function announcementFor(turn: Turn | undefined): string {
     default: return "";
   }
 }
-
-// chatReducer 里唯一的整体复位动作是 hydrate（§7.7「新建：跳 /chat」）。它的类型标注
-// `sessionId: number` 比运行时更严——reducer 只是把它写入 ChatState.sessionId（number | null）。
-// 裁决要求不改 reducer，故只在调用处显式放宽这一处。
-const NEW_SESSION_ACTION = {
-  type: "hydrate",
-  sessionId: null,
-  turns: [],
-} as unknown as ChatAction;
 
 function historyState(): unknown {
   // replaceState 必须带上 Next 写在 history entry 上的路由数据；传 null 会把它抹掉，
@@ -91,7 +82,7 @@ export function ChatPanel({
   // 与 sessionId（spec §7.7 的「新建」要求空转录 + 侧栏取消高亮）。
   const startNewSession = useCallback(() => {
     if (state.pending) return;
-    dispatch(NEW_SESSION_ACTION);
+    dispatch({ type: "hydrate", sessionId: null, turns: [] });
     const pathname = window.location.pathname;
     if (/^\/chat\/\d+$/.test(pathname)) {
       window.history.replaceState(historyState(), "", "/chat");
