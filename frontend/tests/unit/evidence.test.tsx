@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnswerBody } from "@/components/chat/AnswerBody";
 import { EvidenceDrawer } from "@/components/drawer/EvidenceDrawer";
@@ -16,6 +16,16 @@ const citation: Citation = {
   anchor: "医案#问11",
   snippet: "服西药多年不愈",
 };
+
+// AnswerBody 在 answered 时会回填实体卡；这里给引用对应的医案一个最小响应。
+beforeEach(() => {
+  server.use(http.get("/api/cases/11", () =>
+    HttpResponse.json({
+      id: 11, no: "问11", category: null, chief_complaint: "咳嗽气喘",
+      treatment: null, treatment_formulas: [], added_herbs: [],
+      pathogenesis: null, tips: null, raw_md: null,
+    })));
+});
 
 // 行内包含 citation.title，角标才会挂到该行。
 const answerWithCitation: Answer = {
