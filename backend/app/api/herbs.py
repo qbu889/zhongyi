@@ -94,7 +94,7 @@ def list_herbs(
         # alias 是 ARRAY(Text)；展平后 contains 才能命中「现代名」元素
         stmt = stmt.where(or_(Herb.name.contains(q),
                               func.array_to_string(Herb.alias, "\u0001").contains(q)))
-    groups = set(taste_group or [])
+    groups = {g for g in (taste_group or []) if g}
     if groups:
         conds = []
         named = [g for g in groups if g != "未归"]

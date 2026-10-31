@@ -175,9 +175,10 @@ def list_formulas(
     if q:
         alias_ids = select(FormulaAlias.formula_id).where(FormulaAlias.name.contains(q))
         stmt = stmt.where(or_(Formula.canonical_name.contains(q), Formula.id.in_(alias_ids)))
-    if six_jing:
+    values = [v for v in (six_jing or []) if v]
+    if values:
         conds = [FormulaEvidence.six_jing.startswith(j, autoescape=True)
-                 for j in six_jing]
+                 for j in values]
         stmt = stmt.where(Formula.id.in_(
             select(FormulaEvidence.formula_id).where(or_(*conds))))
     if source_doc:

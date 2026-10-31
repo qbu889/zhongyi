@@ -129,3 +129,10 @@ def test_formula_source_doc_filter(indexed):
         "source_doc": "02-伤寒论/伤寒六经方库.md", "limit": 100}).json()
     assert 0 < shaohan["total"] < all_total
     assert shaohan["items"]
+
+
+def test_formula_empty_six_jing_means_no_filter(indexed):
+    """空串筛选值等于未筛选；不能让 `startswith("")` 悄悄收窄到有六经证据的方。"""
+    plain = indexed.get("/api/formulas", params={"limit": 1}).json()["total"]
+    empty = indexed.get("/api/formulas", params={"six_jing": "", "limit": 1}).json()["total"]
+    assert empty == plain

@@ -197,3 +197,11 @@ def test_herb_taste_group_accepts_multiple_values(indexed):
     both = indexed.get("/api/herbs", params=[
         ("taste_group", "酸"), ("taste_group", "甘"), ("limit", 100)]).json()
     assert both["total"] == sour["total"] + sweet["total"]
+
+
+def test_herb_empty_taste_group_means_no_filter(indexed):
+    """空串筛选值等于未筛选；不能让 `IN ('')` 把结果清零。"""
+    plain = indexed.get("/api/herbs", params={"limit": 1}).json()["total"]
+    empty = indexed.get("/api/herbs", params={"taste_group": "", "limit": 1}).json()["total"]
+    assert empty == plain
+
