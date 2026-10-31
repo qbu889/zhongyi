@@ -15,6 +15,14 @@ export function AnswerBody({
 }) {
   const numbers = numberCitations(answer.citations);
   const unmatched = unmatchedCitations(answer.sections, answer.citations);
+  // 编号 → 引用只建一次；重复 ref 保留首个，与原先 find 的结果一致。
+  const citationsByNumber = new Map<number, Citation>();
+  for (const citation of answer.citations) {
+    const number = numbers.get(citationKey(citation));
+    if (number !== undefined && !citationsByNumber.has(number)) {
+      citationsByNumber.set(number, citation);
+    }
+  }
 
   return (
     <div data-testid="answer-body">
@@ -27,8 +35,7 @@ export function AnswerBody({
               <li key={`${section.title}-${index}`}>
                 {line}
                 {numbersForLine(line, answer.citations, numbers).map((n) => {
-                  const citation = answer.citations.find(
-                    (item) => numbers.get(citationKey(item)) === n)!;
+                  const citation = citationsByNumber.get(n)!;
                   return (
                     <CitationSup key={`${n}-${citationKey(citation)}`} n={n}
                       citation={citation} onOpen={onOpenCitation} />

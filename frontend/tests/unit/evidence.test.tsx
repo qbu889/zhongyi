@@ -1,18 +1,47 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AnswerBody } from "@/components/chat/AnswerBody";
 import { EvidenceDrawer } from "@/components/drawer/EvidenceDrawer";
+import type { Answer, Citation } from "@/lib/types";
 import { server } from "../msw/server";
 
-const citation = {
-  ref_type: "case" as const,
+const citation: Citation = {
+  ref_type: "case",
   ref_id: 11,
   title: "问11",
   anchor: "医案#问11",
   snippet: "服西药多年不愈",
+};
+
+// 行内包含 citation.title，角标才会挂到该行。
+const answerWithCitation: Answer = {
+  intent: "C", status: "answered", headline: "总览",
+  sections: [{ title: "辨证", lines: ["问11：咳嗽气喘痰白不能平躺。"] }],
+  citations: [citation], dose_complete: null, candidates: [], followup: [],
+  general_note: null,
+  disclaimer: "本回答基于本地蒸馏语料整理，仅供学习与检索参考；诊断与用药请由执业中医师面诊决定。",
+  prose: "", top_score: 0.4,
+};
+
+// 按页面实际接法组合：正文角标打开抽屉，抽屉关闭后 citation 归 null。
+function DrawerHarness() {
+  const [selected, setSelected] = useState<Citation | null>(null);
+  return (
+    <>
+      <AnswerBody answer={answerWithCitation} onOpenCitation={(item) => setSelected(item)} />
+      <EvidenceDrawer citation={selected} onClose={() => setSelected(null)} />
+    </>
+  );
+}
+
+const evidencePayload = {
+  ref_type: "case", ref_id: 11, anchor: "医案#问11",
+  text: "咳嗽气喘痰白不能平躺，服西药多年不愈。",
+  fields: { no: "问11" },
 };
 
 describe("EvidenceDrawer", () => {
@@ -38,6 +67,25 @@ describe("EvidenceDrawer", () => {
     render(<EvidenceDrawer citation={citation} onClose={vi.fn()} />);
     expect(await screen.findByText("该出处在当前索引版本不存在")).toBeInTheDocument();
   });
+
+  it("closes on Escape and returns focus to the badge that opened it", async () => {
+    server.use(http.get("/api/evidence/case:11", () => HttpResponse.json(evidencePayload)));
+    const user = userEvent.setup();
+
+    render(<DrawerHarness />);
+    const badge = screen.getByRole("button", { name: "查看出处 问11" });
+    await user.click(badge);
+
+    expect(await screen.findByTestId("evidence-drawer")).toBeInTheDocument();
+    expect(await screen.findByText("服西药多年不愈")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByTestId("evidence-drawer")).not.toBeInTheDocument());
+    // Radix 在 setTimeout(0) 里触发 onCloseAutoFocus，需等待焦点归还。
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "查看出处 问11" })).toHaveFocus());
+  });
 });
 
 describe("AnswerBody", () => {
@@ -59,5 +107,30 @@ describe("AnswerBody", () => {
     expect(screen.getByText(/通用框架说明（非本库内容）：肺主宣发肃降/)).toBeInTheDocument();
     expect(screen.getByText(/仅供学习与检索参考/)).toBeInTheDocument();
     expect(screen.queryByTestId("citation-sup")).not.toBeInTheDocument();
+  });
+
+  it("renders an accessible badge and opens the citation on click", async () => {
+    const user = userEvent.setup();
+    const onOpenCitation = vi.fn();
+
+    render(<AnswerBody answer={answerWithCitation} onOpenCitation={onOpenCitation} />);
+    const badge = screen.getByRole("button", { name: "查看出处 问11" });
+    expect(badge).toHaveTextContent("[1]");
+
+    await user.click(badge);
+    expect(onOpenCitation).toHaveBeenCalledTimes(1);
+    expect(onOpenCitation).toHaveBeenCalledWith(citation);
+  });
+
+  it("shows title, anchor and snippet in the tooltip after hovering the badge", async () => {
+    const user = userEvent.setup();
+
+    render(<AnswerBody answer={answerWithCitation} onOpenCitation={vi.fn()} />);
+    await user.hover(screen.getByRole("button", { name: "查看出处 问11" }));
+
+    const tooltip = await screen.findByRole("tooltip", {}, { timeout: 2000 });
+    expect(tooltip).toHaveTextContent("问11");
+    expect(tooltip).toHaveTextContent("医案#问11");
+    expect(tooltip).toHaveTextContent("服西药多年不愈");
   });
 });

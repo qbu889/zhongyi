@@ -36,9 +36,14 @@ export function EvidenceDrawer({
   // 抽屉没有 Dialog.Trigger，Radix 默认无法把焦点还给角标：
   // 打开时记住当前焦点元素，关闭时（含 Esc）显式还原（spec §7.4）。
   const openerRef = useRef<HTMLElement | null>(null);
+  const key = citation ? `${citation.ref_type}:${citation.ref_id}` : null;
 
   useEffect(() => {
-    if (!citation) return;
+    if (!citation) {
+      // 关闭时清空旧 ref 的内容，重新打开其他出处时不会闪现上一段原文。
+      setState({ kind: "loading" });
+      return;
+    }
     let cancelled = false;
     setState({ kind: "loading" });
     getEvidence(citation.ref_type, citation.ref_id)
@@ -53,7 +58,9 @@ export function EvidenceDrawer({
         setState({ kind: "error", message });
       });
     return () => { cancelled = true; };
-  }, [citation]);
+    // 以稳定 key 为依赖：父组件传入同一 ref 的新对象时不应重复请求。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
 
   const formulaId = state.kind === "ready" ? state.evidence.fields.formula_id : null;
   const href = citation ? detailHref(citation)
@@ -90,8 +97,12 @@ export function EvidenceDrawer({
               className="rounded border border-line px-2 py-1 text-sm">关闭</button>
           </div>
 
-          {state.kind === "loading" && <p className="mt-4 text-sm text-ink/60">加载原文…</p>}
-          {state.kind === "error" && <p className="mt-4 text-sm text-cinnabar">{state.message}</p>}
+          {state.kind === "loading" && (
+            <p role="status" className="mt-4 text-sm text-ink/60">加载原文…</p>
+          )}
+          {state.kind === "error" && (
+            <p role="alert" className="mt-4 text-sm text-cinnabar">{state.message}</p>
+          )}
           {state.kind === "ready" && (
             <>
               <p className="mt-4 whitespace-pre-wrap font-serif leading-7">
@@ -104,8 +115,11 @@ export function EvidenceDrawer({
                   </Link>
                 )}
                 <button type="button" className="text-cinnabar underline"
-                  onClick={() => navigator.clipboard.writeText(
-                    `${citation?.title}\n${citation?.anchor}\n\n${state.evidence.text}`)}>
+                  onClick={() => {
+                    // 非安全上下文下 navigator.clipboard 为 undefined，避免 TypeError。
+                    void navigator.clipboard?.writeText(
+                      `${citation?.title}\n${citation?.anchor}\n\n${state.evidence.text}`);
+                  }}>
                   复制引用
                 </button>
               </div>
