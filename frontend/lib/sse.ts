@@ -1,0 +1,74 @@
+import { ApiError, parseApiError } from "./api";
+import type { ChatResponse, Citation, MetaEvent, Progress } from "./types";
+
+export interface SseHandlers {
+  onMeta?: (meta: MetaEvent) => void;
+  onProgress?: (progress: Progress) => void;
+  onCitation?: (citation: Citation) => void;
+  onToken?: (text: string) => void;
+  onDone?: (response: ChatResponse) => void;
+  onError?: (error: { code: string; message: string }) => void;
+}
+
+export function parseSseFrame(frame: string): { event: string; data: unknown } | null {
+  let event = "message";
+  const data: string[] = [];
+  for (const raw of frame.split("\n")) {
+    const line = raw.trimEnd();
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+  }
+  if (!data.length) return null;
+  const text = data.join("\n");
+  let parsed: unknown = text;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // 非 JSON data 保留原字符串
+  }
+  return { event, data: parsed };
+}
+
+export async function streamChat(
+  question: string,
+  sessionId: number | null,
+  handlers: SseHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ question, session_id: sessionId }),
+    signal,
+  });
+  if (!res.ok) throw await parseApiError(res);
+  if (!res.body) throw new ApiError("no_body", "流式响应不可读", 0);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let index = buffer.indexOf("\n\n");
+    while (index >= 0) {
+      const frame = buffer.slice(0, index);
+      buffer = buffer.slice(index + 2);
+      const parsed = parseSseFrame(frame);
+      if (parsed) {
+        switch (parsed.event) {
+          case "meta": handlers.onMeta?.(parsed.data as MetaEvent); break;
+          case "progress": handlers.onProgress?.(parsed.data as Progress); break;
+          case "citation": handlers.onCitation?.(parsed.data as Citation); break;
+          case "token": handlers.onToken?.((parsed.data as { text: string }).text); break;
+          case "done": handlers.onDone?.(parsed.data as ChatResponse); break;
+          case "error": handlers.onError?.(parsed.data as { code: string; message: string }); break;
+          default: break;
+        }
+      }
+      index = buffer.indexOf("\n\n");
+    }
+  }
+}
