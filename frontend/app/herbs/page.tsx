@@ -5,7 +5,7 @@ import { LibraryShell } from "@/components/library/LibraryShell";
 import { ResultRow } from "@/components/library/ResultRow";
 import { serverGet } from "@/lib/api";
 import { PAGE_SIZE } from "@/lib/constants";
-import { buildQuery, paramsFrom, readList } from "@/lib/filters";
+import { buildQuery, pageFrom, paramsFrom, readList } from "@/lib/filters";
 import type { HerbListResponse } from "@/lib/types";
 
 const FILTERS = [
@@ -28,7 +28,7 @@ export default async function HerbsPage({
 }) {
   const raw = await searchParams;
   const params = paramsFrom(raw);
-  const page = Number(params.get("page") ?? "1") || 1;
+  const page = pageFrom(params);
   const query = buildQuery({
     q: params.get("q"),
     taste_group: readList(params, "taste_group"),

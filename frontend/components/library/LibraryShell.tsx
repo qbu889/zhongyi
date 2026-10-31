@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { PAGE_SIZE } from "@/lib/constants";
-import { pageHref } from "@/lib/filters";
+import { pageFrom, pageHref } from "@/lib/filters";
 
 import { FilterPanel, type FilterGroup } from "./FilterPanel";
 
@@ -16,7 +16,7 @@ export function LibraryShell({
   groups: FilterGroup[];
   children: ReactNode;
 }) {
-  const page = Number(params.get("page") ?? "1") || 1;
+  const page = pageFrom(params);
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const initial: Record<string, string[]> = {};
   params.forEach((value, key) => {

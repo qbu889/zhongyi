@@ -5,7 +5,7 @@ import { ResultRow } from "@/components/library/ResultRow";
 import type { FilterGroup } from "@/components/library/FilterPanel";
 import { serverGet } from "@/lib/api";
 import { PAGE_SIZE } from "@/lib/constants";
-import { buildQuery, paramsFrom, readList } from "@/lib/filters";
+import { buildQuery, pageFrom, paramsFrom, readList } from "@/lib/filters";
 import type { FormulaListResponse } from "@/lib/types";
 
 const FILTERS = [
@@ -36,7 +36,7 @@ export default async function FormulasPage({
 }) {
   const raw = await searchParams;
   const params = paramsFrom(raw);
-  const page = Number(params.get("page") ?? "1") || 1;
+  const page = pageFrom(params);
   const query = buildQuery({
     q: params.get("q"),
     six_jing: readList(params, "six_jing"),
@@ -72,7 +72,8 @@ export default async function FormulasPage({
             ? <span className="rounded bg-line px-1 text-xs text-ink/60">身份待确认</span>
             : null}
           meta={`${item.variant_count} 个剂量变体 · ${item.evidence_count} 条出处 · ${
-            item.dose_complete === false ? "剂量不完全" : "剂量完整"}`} />
+            item.dose_complete === false ? "剂量不完全"
+              : item.dose_complete === true ? "剂量完整" : "剂量状态未知"}`} />
       ))}
     </LibraryShell>
   );

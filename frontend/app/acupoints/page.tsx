@@ -5,7 +5,7 @@ import { LibraryShell } from "@/components/library/LibraryShell";
 import { ResultRow } from "@/components/library/ResultRow";
 import { serverGet } from "@/lib/api";
 import { PAGE_SIZE } from "@/lib/constants";
-import { buildQuery, paramsFrom } from "@/lib/filters";
+import { buildQuery, pageFrom, paramsFrom } from "@/lib/filters";
 import type { AcupointListResponse } from "@/lib/types";
 
 const MERIDIANS = [
@@ -31,7 +31,7 @@ export default async function AcupointsPage({
 }) {
   const raw = await searchParams;
   const params = paramsFrom(raw);
-  const page = Number(params.get("page") ?? "1") || 1;
+  const page = pageFrom(params);
   const query = buildQuery({
     q: params.get("q"),
     meridian: params.get("meridian"),
