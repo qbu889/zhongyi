@@ -103,3 +103,27 @@ def test_sse_stream_emits_meta_citations_tokens_done(indexed_client):
     assert events[-1] == "done"
     assert "桂枝" in text
     assert text.count("event: token") >= 1
+
+
+def test_session_list_uses_first_question_and_last_activity(indexed_client):
+    a = indexed_client.post("/api/chat", json={"question": "桂枝汤"}).json()
+    b = indexed_client.post("/api/chat", json={"question": "风池"}).json()
+    indexed_client.post("/api/chat", json={"question": "风池怎么用",
+                                           "session_id": a["session_id"]})
+
+    data = indexed_client.get("/api/chat/sessions").json()
+    assert data["total"] == 2
+    assert data["items"][0]["id"] == a["session_id"]        # a 最后有消息
+    assert data["items"][0]["title"] == "桂枝汤"
+    assert data["items"][0]["message_count"] == 4
+    assert data["items"][1]["id"] == b["session_id"]
+
+
+def test_delete_session_keeps_qa_log_but_drops_messages(indexed_client, db_session):
+    sid = indexed_client.post("/api/chat", json={"question": "桂枝汤"}).json()["session_id"]
+
+    assert indexed_client.delete(f"/api/chat/{sid}").status_code == 204
+    assert indexed_client.get(f"/api/chat/{sid}").status_code == 404
+    assert db_session.scalar(select(func.count()).select_from(QaLog)) == 1
+    assert db_session.scalar(select(QaLog.session_id)) is None
+    assert indexed_client.delete("/api/chat/999999").status_code == 404
