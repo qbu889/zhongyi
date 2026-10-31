@@ -7,6 +7,12 @@ import { chatReducer, initialChatState, type ChatAction, type ChatState } from "
 import { streamChat, type SseHandlers } from "@/lib/sse";
 import type { Answer } from "@/lib/types";
 
+// Task 11 起 ChatPanel 会挂载 SessionSidebar，后者使用 useRouter()：jsdom 下不打桩会抛
+// “invariant expected app router to be mounted”。仅补模块桩，不动任何断言。
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}));
+
 vi.mock("@/lib/sse", () => ({ streamChat: vi.fn() }));
 const mockedStream = vi.mocked(streamChat);
 
