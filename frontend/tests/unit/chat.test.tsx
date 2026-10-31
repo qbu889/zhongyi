@@ -199,6 +199,26 @@ describe("ChatPanel", () => {
     expect(mockedStream).toHaveBeenCalledTimes(2);
   });
 
+  it("ignores a connection break that arrives after the terminal frame", async () => {
+    mockedStream.mockImplementation(async (_question, _sid, handlers: SseHandlers) => {
+      handlers.onDone?.({
+        ...done,
+        answer: { ...answer, status: "refused", sections: [], prose: "" },
+      });
+      // 终帧之后 streamChat 仍在读流：这里模拟代理超时断链抛出的异常。
+      throw new Error("network");
+    });
+    render(<ChatPanel />);
+    await userEvent.type(screen.getByTestId("composer"), "库外问题{Enter}");
+
+    expect(await screen.findByTestId("refusal-card")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // 已结算的一轮不得补发错误，也不得触发自动重试（否则重复 POST、重复落库）。
+    expect(mockedStream).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("message-assistant")).not.toHaveTextContent("生成失败");
+    expect(screen.queryByTestId("intake-skip-note")).not.toBeInTheDocument();
+  });
+
   it("clears the intake card once the summary is submitted", async () => {
     let calls = 0;
     mockedStream.mockImplementation(async (_question, _sid, handlers: SseHandlers) => {
