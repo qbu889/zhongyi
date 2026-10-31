@@ -53,16 +53,28 @@ export async function streamChat(
   const handleFrame = (frame: string) => {
     const parsed = parseSseFrame(frame);
     if (!parsed) return;
+    // done/error 的 data 必须是完整 JSON 对象；退化为字符串说明 JSON 在流中断处被截断，
+    // 此时不得视为终帧，交由末尾的 sawTerminal 检查报 stream_truncated。
+    const terminal = typeof parsed.data === "object" && parsed.data !== null;
     switch (parsed.event) {
       case "meta": handlers.onMeta?.(parsed.data as MetaEvent); break;
       case "progress": handlers.onProgress?.(parsed.data as Progress); break;
       case "citation": handlers.onCitation?.(parsed.data as Citation); break;
-      case "token": handlers.onToken?.((parsed.data as { text: string }).text); break;
+      case "token": {
+        // 只派发能解析为字符串的 token，避免截断帧吐出 undefined。
+        const text = typeof parsed.data === "string"
+          ? parsed.data
+          : (parsed.data as { text?: unknown })?.text;
+        if (typeof text === "string") handlers.onToken?.(text);
+        break;
+      }
       case "done":
+        if (!terminal) break;
         sawTerminal = true;
         handlers.onDone?.(parsed.data as ChatResponse);
         break;
       case "error":
+        if (!terminal) break;
         sawTerminal = true;
         handlers.onError?.(parsed.data as { code: string; message: string });
         break;

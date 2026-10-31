@@ -128,6 +128,22 @@ describe("sse", () => {
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).code).toBe("stream_truncated");
   });
+
+  it("rejects a stream truncated inside a terminal frame's JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([
+      'event: meta\ndata: {"session_id":7,"intent":"B","status":"answered"}\n\n',
+      // EOF 落在 done 帧的 JSON 中间：data 退化为字符串，不能当作正常结束
+      'event: done\ndata: {"session_id":7,"mess',
+    ])));
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    const error = await streamChat("q", null, { onDone, onError })
+      .catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("stream_truncated");
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
 });
 
 describe("export", () => {
