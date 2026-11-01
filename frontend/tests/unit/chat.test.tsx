@@ -133,7 +133,7 @@ describe("ChatPanel", () => {
     release();
     expect(await screen.findByTestId("answer-body")).toHaveTextContent("组成");
     expect(screen.queryByText(/桂枝汤：/)).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("回答已完成");
+    expect(screen.getByTestId("chat-live")).toHaveTextContent("回答已完成");
   });
 
   it("shows the refusal card and the intake card from terminal status", async () => {

@@ -42,7 +42,7 @@ function FieldRow({ field, onChange }: {
           <span className="self-center text-xs text-cinnabar">已从您的描述提取</span>
         )}
         {field.source === "history" && (
-          <span className="self-center text-xs text-ink/50">已从历史对话提取</span>
+          <span className="self-center text-xs text-ink/70">已从历史对话提取</span>
         )}
       </div>
       {field.state === "abnormal" && (
@@ -134,7 +134,7 @@ export function IntakeCard({
           跳过，直接看回答
         </button>
       </div>
-      <p className="mt-2 text-xs text-ink/60">
+      <p className="mt-2 text-xs text-ink/70">
         只做结构化记录，不生成诊断结论；Tab 遍历、空格选择、Enter 提交。
       </p>
     </form>

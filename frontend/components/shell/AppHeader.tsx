@@ -13,7 +13,7 @@ export function AppHeader() {
           {NAV_ITEMS.map((item) => (
             <li key={item.href}>
               {item.disabled ? (
-                <span aria-disabled="true" title="M5 交付" className="cursor-not-allowed text-ink/40">
+                <span aria-disabled="true" title="M5 交付" className="cursor-not-allowed text-ink/70 line-through">
                   {item.label}
                 </span>
               ) : (

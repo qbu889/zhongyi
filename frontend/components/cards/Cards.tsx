@@ -19,7 +19,7 @@ export function Cards({ citations }: { citations: Citation[] }) {
       {entries.map(([key, card]) => {
         if ("error" in card) {
           return (
-            <div key={key} className="rounded border border-line p-2 text-sm text-ink/60">
+            <div key={key} className="rounded border border-line p-2 text-sm text-ink/70">
               卡片加载失败
               <button type="button" className="ml-2 text-cinnabar underline" onClick={reload}>重试</button>
             </div>

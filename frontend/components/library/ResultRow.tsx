@@ -15,7 +15,7 @@ export function ResultRow({
         <Link href={href} className="font-serif text-base hover:text-cinnabar">{title}</Link>
         {badges}
       </div>
-      {meta && <div className="mt-1 text-sm text-ink/60">{meta}</div>}
+      {meta && <div className="mt-1 text-sm text-ink/70">{meta}</div>}
     </li>
   );
 }

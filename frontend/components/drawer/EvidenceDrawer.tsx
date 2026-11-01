@@ -91,14 +91,14 @@ export function EvidenceDrawer({
               <Dialog.Title className="font-serif text-lg">
                 {citation?.title ?? "出处"}
               </Dialog.Title>
-              <p className="mt-1 text-xs text-ink/60">{citation?.anchor}</p>
+              <p className="mt-1 text-xs text-ink/70">{citation?.anchor}</p>
             </div>
             <button type="button" onClick={onClose} aria-label="关闭溯源抽屉"
               className="rounded border border-line px-2 py-1 text-sm">关闭</button>
           </div>
 
           {state.kind === "loading" && (
-            <p role="status" className="mt-4 text-sm text-ink/60">加载原文…</p>
+            <p role="status" className="mt-4 text-sm text-ink/70">加载原文…</p>
           )}
           {state.kind === "error" && (
             <p role="alert" className="mt-4 text-sm text-cinnabar">{state.message}</p>

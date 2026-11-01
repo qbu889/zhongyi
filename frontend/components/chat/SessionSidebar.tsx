@@ -79,7 +79,7 @@ export function SessionSidebar({
               className="block truncate font-medium hover:text-cinnabar">
               {item.title}
             </Link>
-            <p className="mt-0.5 text-xs text-ink/50">
+            <p className="mt-0.5 text-xs text-ink/70">
               {new Date(item.last_activity_at).toLocaleString("zh-CN")} · {item.message_count} 条
             </p>
             {confirming === item.id ? (
@@ -97,12 +97,12 @@ export function SessionSidebar({
             ) : (
               <button type="button" aria-label={`删除会话 ${item.title}`}
                 onClick={() => { setDeleteFailed(false); setConfirming(item.id); }}
-                className="mt-1 text-xs text-ink/50 underline">删除</button>
+                className="mt-1 text-xs text-ink/70 underline">删除</button>
             )}
           </li>
         ))}
         {!failed && items.length === 0 && (
-          <li className="text-xs text-ink/50">还没有会话</li>
+          <li className="text-xs text-ink/70">还没有会话</li>
         )}
       </ul>
     </aside>

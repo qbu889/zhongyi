@@ -4,6 +4,7 @@ import { Cards } from "@/components/cards/Cards";
 import { citationKey, numberCitations, numbersForLine, unmatchedCitations } from "@/lib/citations";
 import type { Answer, Citation } from "@/lib/types";
 
+import { AnswerActions } from "./AnswerActions";
 import { CitationSup } from "./CitationSup";
 import { GeneralNote } from "./GeneralNote";
 
@@ -48,7 +49,7 @@ export function AnswerBody({
         </section>
       ))}
       {unmatched.length > 0 && (
-        <p className="mt-2 text-xs text-ink/60">
+        <p className="mt-2 text-xs text-ink/70">
           出处：
           {unmatched.map((citation) => (
             <CitationSup key={citationKey(citation)}
@@ -59,7 +60,8 @@ export function AnswerBody({
       )}
       {answer.general_note && <GeneralNote text={answer.general_note} />}
       {answer.status === "answered" && <Cards citations={answer.citations} />}
-      <p className="mt-3 text-xs text-ink/60">{answer.disclaimer}</p>
+      <AnswerActions answer={answer} />
+      <p className="mt-3 text-xs text-ink/70">{answer.disclaimer}</p>
     </div>
   );
 }

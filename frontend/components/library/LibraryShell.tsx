@@ -29,9 +29,9 @@ export function LibraryShell({
       <FilterPanel basePath={basePath} groups={groups} initial={initial} />
       <section>
         <h1 className="font-serif text-2xl">{title}</h1>
-        <p className="mt-1 text-sm text-ink/60">共 {total} 条</p>
+        <p className="mt-1 text-sm text-ink/70">共 {total} 条</p>
         {total === 0 ? (
-          <p className="mt-4 text-sm text-ink/60">
+          <p className="mt-4 text-sm text-ink/70">
             没有匹配结果，换个筛选，或者
             <Link href="/chat" className="ml-1 text-cinnabar underline">去对话页问</Link>
           </p>

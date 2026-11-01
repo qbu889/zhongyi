@@ -29,7 +29,7 @@ function ChatPageInner() {
 
 export default function ChatPage() {
   return (
-    <Suspense fallback={<p className="p-4 text-sm text-ink/60">加载…</p>}>
+    <Suspense fallback={<p className="p-4 text-sm text-ink/70">加载…</p>}>
       <ChatPageInner />
     </Suspense>
   );

@@ -69,7 +69,7 @@ export default async function FormulasPage({
         <ResultRow key={item.id} href={`/formulas/${item.id}`}
           title={item.canonical_name}
           badges={item.status === "candidate"
-            ? <span className="rounded bg-line px-1 text-xs text-ink/60">身份待确认</span>
+            ? <span className="rounded bg-line px-1 text-xs text-ink/70">身份待确认</span>
             : null}
           meta={`${item.variant_count} 个剂量变体 · ${item.evidence_count} 条出处 · ${
             item.dose_complete === false ? "剂量不完全"

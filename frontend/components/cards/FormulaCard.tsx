@@ -16,7 +16,7 @@ const PAIR_DIFF_LABELS: Record<string, string> = {
 export function VariantTable({ variant, mode }: { variant: FormulaVariant; mode: DoseMode }) {
   return (
     <div className="mt-3 overflow-x-auto">
-      <p className="text-xs text-ink/60">{variant.source_doc}</p>
+      <p className="text-xs text-ink/70">{variant.source_doc}</p>
       <table className="w-full border-collapse text-left text-sm">
         <thead>
           <tr className="border-b border-line">
@@ -39,14 +39,14 @@ export function VariantTable({ variant, mode }: { variant: FormulaVariant; mode:
                       {cell.text}
                     </span>
                     {cell.tone === "none" && (
-                      <span className="ml-1 text-xs text-ink/60">
+                      <span className="ml-1 text-xs text-ink/70">
                         （{DOSE_STATE_LABELS[item.dose_state] ?? item.dose_state}）
                       </span>
                     )}
                   </td>
                 )}
                 <td className="py-1 pr-2">{item.dose_text ?? "—"}</td>
-                <td className="py-1 text-xs text-ink/60">{item.conversion_note ?? ""}</td>
+                <td className="py-1 text-xs text-ink/70">{item.conversion_note ?? ""}</td>
               </tr>
             );
           })}
@@ -104,9 +104,9 @@ export function FormulaCard({ formula }: { formula: FormulaDetail }) {
         <VariantTable key={variant.id} variant={variant} mode={mode} />
       ))}
       {mode === "ancient" && (
-        <p className="mt-2 text-xs text-ink/60">换算标准：1两≈15g</p>
+        <p className="mt-2 text-xs text-ink/70">换算标准：1两≈15g</p>
       )}
-      <footer className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-ink/60">
+      <footer className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-ink/70">
         <span>
           出处：
           {formula.evidence.map((item) =>

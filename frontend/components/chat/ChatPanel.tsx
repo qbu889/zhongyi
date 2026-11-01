@@ -106,7 +106,7 @@ export function ChatPanel({
                 <div className="flex flex-wrap items-center gap-2">
                   <IntentBadge intent={turn.intent} />
                   {turn.phase === "sending" && (
-                    <span data-testid="sending" className="text-xs text-ink/60">正在检索本地语料…</span>
+                    <span data-testid="sending" className="text-xs text-ink/70">正在检索本地语料…</span>
                   )}
                 </div>
                 {turn.progress && (
@@ -148,7 +148,7 @@ export function ChatPanel({
                   </div>
                 )}
                 {turn.phase === "interrupted" && (
-                  <div className="mt-2 flex items-center gap-2 text-sm text-ink/60">
+                  <div className="mt-2 flex items-center gap-2 text-sm text-ink/70">
                     已中断
                     <button type="button" onClick={() => sendQuestion(turn.question)}
                       className="underline">重试</button>
@@ -160,7 +160,7 @@ export function ChatPanel({
         </div>
         <Composer pending={state.pending} initialValue={initialQuestion}
           onSend={sendQuestion} onStop={stop} />
-        <div role="status" aria-live="polite" className="sr-only">{announcement}</div>
+        <div data-testid="chat-live" role="status" aria-live="polite" className="sr-only">{announcement}</div>
         <EvidenceDrawer citation={activeCitation} onClose={() => setActiveCitation(null)} />
       </div>
     </div>

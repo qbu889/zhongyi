@@ -39,7 +39,7 @@ export function Composer({
         placeholder="用一句话描述症状，或输入方名 / 药名 / 穴位"
         className="w-full resize-y rounded border border-line bg-paper px-3 py-2 text-sm" />
       <div className="mt-1 flex items-center justify-between">
-        <span className="text-xs text-ink/50">Enter 发送，Shift+Enter 换行</span>
+        <span className="text-xs text-ink/70">Enter 发送，Shift+Enter 换行</span>
         {pending ? (
           <button type="button" onClick={onStop}
             className="rounded border border-cinnabar px-3 py-1 text-sm text-cinnabar">

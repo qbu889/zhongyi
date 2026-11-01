@@ -72,7 +72,7 @@ export function SearchSuggest({
             if (!group.length) return null;
             return (
               <div key={match} data-testid="suggest-group">
-                <p className="text-xs text-ink/60">{label}</p>
+                <p className="text-xs text-ink/70">{label}</p>
                 <ul>
                   {group.map((hit) => {
                     const href = refHref(hit.ref_type, hit.ref_id);
