@@ -190,7 +190,13 @@ test("会话：URL 落定、回放与删除", async ({ page }) => {
   await expect(page).toHaveURL(/\/chat\/\d+$/, { timeout: 30_000 });
   await expect(page.getByTestId("answer-body")).toBeVisible();
 
-  const current = page.getByTestId("session-item").first();
+  // 侧栏列表是在 done 之后异步刷新的：用 first() 会按列表顺序赌一把（长跑过的
+  // dev server 上稳定翻车）。这里改为死等「被标记为当前会话的那一行」，并要求它恰好一条。
+  const current = page.locator('[data-testid="session-item"]', {
+    has: page.locator('a[aria-current="page"]'),
+  });
+  await expect(current).toHaveCount(1, { timeout: 30_000 });
+
   await current.getByRole("link").click();
   await expect(page.getByTestId("answer-body")).toContainText("桂枝");
 
