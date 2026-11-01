@@ -132,6 +132,9 @@ describe("library detail views", () => {
     expect(screen.getByRole("link", { name: "桂枝汤" })).toHaveAttribute("href", "/formulas/61");
     expect(screen.getByRole("link", { name: "就本条提问" }))
       .toHaveAttribute("href", "/chat?ref=herb:6");
+    // §9.2 组成反查的产出端：herb 详情给出 /formulas?herb=<药名>（后端参数名同名）。
+    expect(decodeURIComponent(screen.getByRole("link", { name: "查含此药的方" })
+      .getAttribute("href") ?? "")).toBe("/formulas?herb=牡桂");
   });
 
   it("acupoint detail lists the recorded symptoms", () => {

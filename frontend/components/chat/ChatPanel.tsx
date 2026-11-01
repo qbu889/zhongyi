@@ -142,7 +142,9 @@ export function ChatPanel({
                 )}
                 {turn.phase === "error" && (
                   <div className="mt-2 flex items-center gap-2 text-sm text-cinnabar">
-                    生成失败
+                    {/* §6.3：服务端 detail.message（如 index_not_ready 的「索引尚未构建…」）
+                        必须跟着静态文案一起上屏，否则错误码契约在前端被丢掉。 */}
+                    生成失败{turn.error ? `：${turn.error}` : ""}
                     <button type="button" onClick={() => sendQuestion(turn.question)}
                       className="underline">重试</button>
                   </div>

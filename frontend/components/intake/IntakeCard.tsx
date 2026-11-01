@@ -41,9 +41,6 @@ function FieldRow({ field, onChange }: {
         {field.source === "typed" && (
           <span className="self-center text-xs text-cinnabar">已从您的描述提取</span>
         )}
-        {field.source === "history" && (
-          <span className="self-center text-xs text-ink/70">已从历史对话提取</span>
-        )}
       </div>
       {field.state === "abnormal" && (
         <input aria-label={`${field.key}补充说明`} value={field.note}

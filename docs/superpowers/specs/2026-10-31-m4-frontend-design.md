@@ -301,6 +301,7 @@ Tab 遍历三态开关，空格切换，Enter 提交；Tabs 用方向键切换�
 
 - 筛选：`q`、`taste_group`（多选）、`organ_group`、`flavor_state`；分页。
 - 列表显示性味、五味/五脏 chip、含方数。
+- 详情「含方」区提供「查含此药的方」→ `/formulas?herb=<药名>`，作为 §9.2 `herb`（组成反查）的产出端。
 
 ### 9.4 针灸库
 
@@ -417,6 +418,9 @@ Tab 遍历三态开关，空格切换，Enter 提交；Tabs 用方向键切换�
 8. **会话不重命名**；反馈、框架页、管理页、compose、鉴权、生产建表均留 M5。
 9. **无真实 LLM**：prose 为 FakeLlm 拼接；M4 终态以 `sections` 为正文口径。
 10. **单轮快速追问 chips**：M4 不生成，只保留问诊卡。
+11. **问诊历史对话预填未实现**：§8.2「已能从当前问题或历史对话提取的项预填」在 M4 只做到「当前问题」——`prefillIntake` 仅扫本轮问题文本，跨轮历史提取留 M5（`IntakeCard` 里永不命中的「已从历史对话提取」标记已作为死代码摘除，`lib/intake.ts` 的 `〔历史〕` 格式化分支按 Task 6 的已测代码保留）。
+12. **`replaceState` URL 同步与 Next 路由状态的非对称**：会话 id 由 `window.history.replaceState` 写进地址栏，router.state 仍是 `/chat`，故站内「新会话」是同树导航、靠 reducer 复位兜底（转录清空 + 侧栏取消高亮，`e2e/chat.spec.ts` 的「新会话」用例在真实浏览器里锁定）；Back/Forward 跨该入口不会回到那个从未挂载过的 phantom `/chat`。
+13. **方剂卡/详情的 `dose_complete` 取「任一变体完整」**：混合方（五苓散）顶部因此不挂「本方剂量不完全可执行」，行级 `—` 与中文状态仍如实呈现——口径属后端契约，留待后端定夺。
 
 ---
 

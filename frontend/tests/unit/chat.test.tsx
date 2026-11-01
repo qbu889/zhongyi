@@ -194,6 +194,8 @@ describe("ChatPanel", () => {
     // 已出 token 后失败只落到错误态，绝不自动重发（spec §7.8）。
     expect(await screen.findByRole("button", { name: "重试" })).toBeInTheDocument();
     expect(screen.getByTestId("message-assistant")).toHaveTextContent("生成失败");
+    // §6.3 错误契约：服务端下发的 message 跟在「生成失败」后面一起上屏。
+    expect(screen.getByTestId("message-assistant")).toHaveTextContent("生成失败：network");
     expect(mockedStream).toHaveBeenCalledTimes(1);
   });
 

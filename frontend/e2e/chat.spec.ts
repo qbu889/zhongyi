@@ -72,7 +72,9 @@ test("方剂卡与详情页剂量一致", async ({ page }) => {
 
   await page.getByTestId("dose-toggle").click();
   await expect(page.getByTestId("dose-cell")).toHaveCount(0);
-  await expect(page.getByTestId("formula-detail")).toContainText("枚");
+  // §6.7 第 3 项的「古制列出留痕」：断到实际存库的古制原量整串
+  // （zhongyi_e2e：formula 110 桂枝汤 / 经方组成 / 大枣 = `十二枚(劈)`，括号为半角）。
+  await expect(page.getByTestId("formula-detail")).toContainText("十二枚(劈)");
 });
 
 test("剂量诚实：非 exact 药味不臆造克数", async ({ page }) => {
@@ -197,4 +199,35 @@ test("会话：URL 落定、回放与删除", async ({ page }) => {
   await page.getByRole("button", { name: "确认" }).click();
   await expect(page).toHaveURL(/\/chat$/);
   await expect(page.getByTestId("session-item")).toHaveCount(before - 1);
+});
+
+// b60335b 修的是一个真实浏览器缺陷：replaceState 只挪地址栏，Next 的 router.state 仍是 /chat，
+// 于是「新会话」是同树导航，转录与侧栏高亮都留在上一轮——jsdom 里导航本身没实现，证不了这件事。
+// 已知边界（终审 R14）：URL 由 replaceState 同步，所以 Back 不会回到那个从未挂载过的 phantom /chat
+// 入口；本用例刻意不断言 Back/Forward 语义。
+test("新会话：真实浏览器里清空转录并重启会话机制", async ({ page }) => {
+  await ask(page, "桂枝汤");
+  await expect(page).toHaveURL(/\/chat\/\d+$/, { timeout: 30_000 });
+  await expect(page.getByTestId("answer-body")).toBeVisible();
+  const firstId = /\/chat\/(\d+)$/.exec(page.url())?.[1];
+  expect(firstId, "首问后要落定会话语句 URL").toBeTruthy();
+
+  const currentRow = page.locator('[data-testid="session-item"] a[aria-current="page"]');
+  await expect(currentRow).toHaveCount(1);
+
+  await page.getByRole("link", { name: "新会话" }).click();
+
+  await expect(page.getByTestId("chat-transcript").getByTestId("message-user")).toHaveCount(0);
+  await expect(page.getByTestId("answer-body")).toHaveCount(0);
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(currentRow).toHaveCount(0);
+
+  // 复位没有打断会话机制：从干净状态再问一次，新的一轮落到另一个会话 id 上。
+  await ask(page, "问11");
+  await expect(page).toHaveURL(/\/chat\/\d+$/, { timeout: 30_000 });
+  await expect(page.getByTestId("answer-body")).toBeVisible();
+  const secondId = /\/chat\/(\d+)$/.exec(page.url())?.[1];
+  expect(secondId).toBeTruthy();
+  expect(secondId).not.toBe(firstId);
+  await expect(page.getByTestId("chat-transcript").getByTestId("message-user")).toHaveCount(1);
 });

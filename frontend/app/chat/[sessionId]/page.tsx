@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { ApiError, serverGet } from "@/lib/api";
+import { parseId } from "@/lib/detail";
 import { historyToTurns } from "@/lib/history";
 import type { ChatHistory } from "@/lib/types";
 
@@ -11,10 +12,10 @@ export default async function SessionPage({
   params: Promise<{ sessionId: string }>;
 }) {
   const { sessionId } = await params;
-  // 只接受纯数字段：Number() 会放行 "0x10" / "1e2" / " 5 " 这类写法，必须先把它们挡在 notFound()。
-  if (!/^\d+$/.test(sessionId)) notFound();
-  const id = Number(sessionId);
-  if (!Number.isInteger(id) || id <= 0) notFound();
+  // 与四大库详情同一把尺（R17）：Number() + Number.isInteger 会放行 20–21 位写法
+  // （Number.isInteger(1e20) 为 true），那种段会打到后端 bigint 越界、在公开路由上
+  // 变成 Next 的崩溃页；parseId 用 /^\d+$/ + Number.isSafeInteger 一律挡在 notFound()。
+  const id = parseId(sessionId);
 
   let history: ChatHistory;
   try {

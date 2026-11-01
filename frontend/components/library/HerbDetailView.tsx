@@ -50,6 +50,14 @@ export function HerbDetailView({ herb }: { herb: HerbDetail }) {
         <h2 id="formulas-heading" className="font-serif text-lg font-semibold">
           含方（{herb.formula_count}）
         </h2>
+        {/* §9.2 的组成反查：`herb` 是后端 /api/formulas 的查询参数名
+            （backend/app/api/formulas.py:169，按 Herb.name / 别名 / herb_text 命中）。 */}
+        <p className="mt-1 text-sm">
+          <Link className="text-cinnabar underline"
+            href={`/formulas?herb=${encodeURIComponent(herb.name)}`}>
+            查含此药的方
+          </Link>
+        </p>
         {herb.formulas.length === 0 ? (
           <p className="mt-1 text-sm text-ink/70">本库暂无含此药的方剂。</p>
         ) : (
