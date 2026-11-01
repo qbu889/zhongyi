@@ -114,7 +114,11 @@ describe("AnswerBody", () => {
       />,
     );
     expect(screen.getByTestId("answer-body")).toHaveTextContent("寒饮郁肺");
-    expect(screen.getByText(/通用框架说明（非本库内容）：肺主宣发肃降/)).toBeInTheDocument();
+    const aside = screen.getByText(/通用框架说明（非本库内容）：肺主宣发肃降/);
+    expect(aside).toBeInTheDocument();
+    // 灰底虚线框的样式契约（components/chat/GeneralNote.tsx 的 className）
+    expect(aside).toHaveClass(/border-dashed/);
+    expect(aside.tagName).toBe("ASIDE");
     expect(screen.getByText(/仅供学习与检索参考/)).toBeInTheDocument();
     expect(screen.queryByTestId("citation-sup")).not.toBeInTheDocument();
   });

@@ -14,7 +14,13 @@ test("方剂筛选写入 URL 且刷新后保持", async ({ page }) => {
 });
 
 test("柴胡与牡桂都走精确通道", async ({ request }) => {
-  for (const query of ["柴胡", "牡桂"]) {
+  // §6.7 第 4 项要求的是「精确匹配」，不是字面匹配：`match` 必须是 exact，
+  // 并且各自命中固定的那条中药记录（实测：柴胡→herb#30 茈胡、牡桂→herb#90 牡桂）。
+  const expectations = [
+    { query: "柴胡", refId: 30, title: "茈胡" },
+    { query: "牡桂", refId: 90, title: "牡桂" },
+  ];
+  for (const { query, refId, title } of expectations) {
     const response = await request.post("/api/search", {
       data: { query, kind: ["herb"], top: 5 },
     });
@@ -22,7 +28,9 @@ test("柴胡与牡桂都走精确通道", async ({ request }) => {
     const body = await response.json();
     const top = body.hits.find((hit: { ref_type: string }) => hit.ref_type === "herb");
     expect(top, `${query} 应有中药命中`).toBeTruthy();
-    expect(["exact", "literal"]).toContain(top.match);
+    expect(top.match, `${query} 必须落在精确匹配组`).toBe("exact");
+    expect(top.ref_id, `${query} 应命中 herb#${refId}`).toBe(refId);
+    expect(top.title, `${query} 的规范名`).toBe(title);
   }
 });
 
@@ -57,17 +65,50 @@ test("方剂详情：变体与加减方分离", async ({ page, request }) => {
   await expect(page.getByTestId("detail-disclaimer")).toBeVisible();
   await expect(page.getByTestId("variant-badge")).toBeVisible();
   await expect(page.getByRole("heading", { name: "加减方谱系" })).toBeVisible();
-  await expect(page.locator("table")).toHaveCount(detail.variants.length);
 
   // §6.7 第 5 项的口径是「变体列表中不得出现加减方」，故按剂量变体区断言（D6）；
   // 加减方作为独立 formula 必须出现在「加减方谱系」里，两处都是规格要求。
   const variants = page.getByRole("region", { name: "剂量变体" });
+  // 表格计数限定在剂量变体区：页面上任何无关表格都不该让一个正确的页面失败。
+  await expect(variants.locator("table")).toHaveCount(detail.variants.length);
   const variantText = await variants.innerText();
   expect(variantText).not.toContain("桂枝加葛根汤");
   expect(variantText).not.toContain("桂枝加厚朴杏仁汤");
   const lineage = page.getByRole("region", { name: "加减方谱系" });
   await expect(lineage).toContainText("桂枝加葛根汤");
   await expect(lineage).toContainText("桂枝加厚朴杏仁汤");
+});
+
+test("一物瓜蒂汤详情页：表头挂不完全提示且克数列无臆造值", async ({ page, request }) => {
+  // §6.7 第 6 项的「卡片与详情页顶部均挂」需要详情页自身的 e2e 证据（对话卡那条在 chat.spec）。
+  // id 从检索接口解析，不写死：本方全量 4 行都非 exact（count_only + 3× absent）。
+  const list = await (await request.get("/api/formulas?q=一物瓜蒂汤&limit=20")).json();
+  const target = list.items.find(
+    (item: { canonical_name: string }) => item.canonical_name === "一物瓜蒂汤",
+  );
+  expect(target, "e2e 库应有一物瓜蒂汤").toBeTruthy();
+  const detail = await (await request.get(`/api/formulas/${target.id}`)).json();
+  expect(detail.dose_complete, "接口应判定该方剂量不完全").toBe(false);
+
+  await page.goto(`/formulas/${target.id}`);
+  const formulaDetail = page.getByTestId("formula-detail");
+  await expect(formulaDetail).toBeVisible();
+  await expect(formulaDetail).toContainText("本方剂量不完全可执行");
+
+  const cells = page.getByRole("region", { name: "剂量变体" }).getByTestId("dose-cell");
+  const count = await cells.count();
+  // 剂量格数 = 所有变体的药味行数之和（本方只有一个古制变体）。
+  expect(count).toBe(
+    detail.variants.reduce(
+      (sum: number, variant: { items: unknown[] }) => sum + variant.items.length,
+      0,
+    ),
+  );
+  for (let index = 0; index < count; index += 1) {
+    // FR-3：非 exact 药味只显示 —（+中文状态），绝不臆造克数。
+    await expect(cells.nth(index)).toContainText("—");
+    await expect(cells.nth(index)).not.toContainText(/\d+g/);
+  }
 });
 
 test("乌梅丸身份归一：列表仅一条，古制与克数变体同属一方", async ({ request }) => {

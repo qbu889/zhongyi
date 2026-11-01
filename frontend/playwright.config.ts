@@ -25,7 +25,9 @@ export default defineConfig({
   reporter: [["list"]],
   use: {
     baseURL: FRONTEND_ORIGIN,
-    trace: "on-first-retry",
+    // 本配置没有 retries（workers:1、serial 对话套件），on-first-retry 是死配置；
+    // 改为失败即保留 trace，便于事后定位。
+    trace: "retain-on-failure",
     locale: "zh-CN",
   },
   webServer: [

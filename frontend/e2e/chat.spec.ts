@@ -4,8 +4,12 @@ test.describe.configure({ mode: "serial" });
 
 async function ask(page: Page, question: string) {
   await page.goto("/chat");
-  await page.getByTestId("composer").fill(question);
-  await page.getByTestId("send").click();
+  // 提交走 Composer 的 Enter 分支（非 Shift 且非输入法组合态即提交，见
+  // components/chat/Composer.tsx），不用鼠标；`send` 按钮本身仍由 e2e/a11y.spec.ts
+  // 的 `getByTestId("send").click()` 覆盖（两处用例各一次）。
+  const composer = page.getByTestId("composer");
+  await composer.fill(question);
+  await composer.press("Enter");
 }
 
 test("状态机、进度、角标与抽屉", async ({ page }) => {
@@ -124,13 +128,39 @@ test("医案回答与抽屉原文", async ({ page }) => {
     .toHaveAttribute("href", /\/cases\/\d+/);
 });
 
-test("拒答卡：无自由发挥、兜底按钮置灰", async ({ page }) => {
+test("拒答卡：无自由发挥、兜底按钮置灰、候选 chips 对齐后端", async ({ page, request }) => {
   await ask(page, "乳腺癌靶向药有哪些");
   const refusal = page.getByTestId("refusal-card");
   await expect(refusal).toBeVisible({ timeout: 30_000 });
   await expect(refusal).toContainText("本地库未收录");
   await expect(refusal.getByRole("button", { name: "在原文 text/ 搜一下" })).toBeDisabled();
   await expect(page.getByTestId("answer-body")).toHaveCount(0);
+
+  // §6.7 第 2 项的「候选 chips」：数量与标题都必须等于这一轮后端下发的 answer.candidates，
+  // 所以从已落定的会话 URL 回读历史，而不是在测试里写死名字。
+  await expect(page).toHaveURL(/\/chat\/\d+$/, { timeout: 30_000 });
+  const sessionId = Number(/\/chat\/(\d+)$/.exec(page.url())?.[1]);
+  expect(sessionId, "拒答轮也要落定会话语句 URL").toBeGreaterThan(0);
+  const history = await (await request.get(`/api/chat/${sessionId}`)).json();
+  const assistant = [...history.messages].reverse()
+    .find((item: { role: string }) => item.role === "assistant");
+  const candidates = assistant?.content?.candidates ?? [];
+  expect(candidates.length, "e2e 库这一轮应有候选命中").toBeGreaterThan(0);
+
+  // 「在原文 text/ 搜一下」带 disabled 属性，因此启用状态的按钮就是候选 chips。
+  const chips = refusal.locator("button:not([disabled])");
+  await expect(chips).toHaveCount(candidates.length);
+  const chipTitles = (await chips.allInnerTexts()).map((title) => title.trim());
+  expect(chipTitles).toEqual(candidates.map((item: { title: string }) => item.title));
+
+  // 点击候选 chip 会以该标题发起新一轮：多出一条用户消息，且新轮进入 answered 正文
+  // （首个候选是 framework 精确命中项，实测 status=answered）。
+  const firstTitle = chipTitles[0];
+  const userTurns = await page.getByTestId("message-user").count();
+  await chips.first().click();
+  await expect(page.getByTestId("message-user")).toHaveCount(userTurns + 1);
+  await expect(page.getByTestId("message-user").last()).toContainText(firstTitle);
+  await expect(page.getByTestId("answer-body")).toBeVisible({ timeout: 30_000 });
 });
 
 test("问诊卡：键盘选择并提交", async ({ page }) => {
@@ -144,7 +174,12 @@ test("问诊卡：键盘选择并提交", async ({ page }) => {
   await page.keyboard.press("Space");
   await expect(normal).toHaveAttribute("aria-checked", "true");
 
-  await intake.getByRole("button", { name: "提交主诉补充" }).click();
+  // 提交同样只用键盘：焦点移到 type=submit 的「提交主诉补充」后按 Enter（浏览器原生
+  // 触发表单 submit）。这里刻意不用 Tab + Enter——Tab 会落到同组的下一个 radio，
+  // 反而把刚选好的三态改掉。
+  const submit = intake.getByRole("button", { name: "提交主诉补充" });
+  await submit.focus();
+  await page.keyboard.press("Enter");
   await expect(page.getByTestId("message-user").last()).toContainText("主诉补充（问诊卡）");
 });
 
