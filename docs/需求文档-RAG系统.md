@@ -446,17 +446,19 @@ formula_variant_pair(formula_id, variant_a, variant_b, pairing_method /*declared
 
 ### 6.7 交互验收清单（M4 验收用）
 
-- [ ] 提问"咳嗽气喘痰白不能平躺"：可见状态机全程流转，回答带角标，点开抽屉可见医案问11原文高亮。
-- [ ] 提问库内不存在的方名：出现拒答卡 + 候选 chips + 原文兜底按钮，无自由发挥内容。
-- [ ] 方剂卡默认显示克、切换古制后留痕括号可见，与详情页数值一致（NFR-4）。
-- [ ] 提问「柴胡」（库内古名 `茈胡`）与提问「牡桂」（现代名 `桂枝`）都命中同一条中药记录，且走的是精确匹配而非语义召回（现状问题 1）。
-- [ ] 打开「桂枝汤」详情：变体列表中**不得出现桂枝加葛根汤 / 桂枝加厚朴杏仁汤**（方#61/72/73/74），这三方各自是独立 `formula` 且带指回桂枝汤的 alias（§5.6 D6）；搜「乌梅丸」只能看到一条方，其古制与克数变体归到同一身份（`方` 尾分裂已修）。
-- [ ] 查看「一物瓜蒂汤」（全方无 `exact`：`瓜蒂 二十个` 为 `count_only`，另 3 处 `剂量见原书` 为 `absent`，且含「表症/冷水」注记误抽）与「五苓散」（`猪苓 十八铢` 为 `unknown_unit`、`桂枝 半两` 为 `exact` 的混合方）：非 exact 药味的克数列显示 `—`/`~`、顶部出现「剂量不完全可执行」，页面上找不到任何臆造克数（FR-3 五态）。
-- [ ] `general_note` 灰框样式与正文可肉眼区分（NFR-3）。
-- [ ] 问诊卡三态+提交后生成主诉摘要并触发新一轮辨证；跳过路径可用。
-- [ ] 四大库任一筛选组合刷新页面后保持（URL 同步）；"就本条提问"跳转带上下文。
-- [ ] 免责条在对话、详情、导出物三处均出现（NFR-5）。
-- [ ] 问诊表单纯键盘可完成；正文/背景对比度 ≥ 4.5:1。
+- [x] 提问"咳嗽气喘痰白不能平躺"：可见状态机全程流转，回答带角标，点开抽屉可见医案问11原文高亮。（**高亮按 §7.4 边界执行**：后端 `app/rag/builders.py` 只为 evidence 类 citation 写 `snippet`，医案（case）citation 的 `snippet` 实测为空串，`GET /api/evidence/case:11` 的原文里找不到可高亮的片段 → 按「找不到则不高亮」，问11 抽屉 **0 个 `mark`、原文完整可读**；高亮的**命中分支**在同一条链路的方剂出处抽屉上实测为 1 个 `mark`（桂枝汤·太阳病原文）。两端都由 `frontend/e2e/chat.spec.ts` 锁定，单测另有 `tests/unit/evidence.test.tsx` 覆盖。）
+- [x] 提问库内不存在的方名：出现拒答卡 + 候选 chips + 原文兜底按钮，无自由发挥内容。（「乳腺癌靶向药有哪些」→ `status=refused`、3 条真实候选 chips、兜底按钮 disabled、正文区无 `answer-body`。）
+- [x] 方剂卡默认显示克、切换古制后留痕括号可见，与详情页数值一致（NFR-4）。（卡片首个克数格文本与 `/formulas/:id` 首个克数格 `toHaveText` 相等；切古制后克数列整列消失、古制列出「十二枚(劈)」留痕。）
+- [x] 提问「柴胡」（库内古名 `茈胡`）与提问「牡桂」（现代名 `桂枝`）都命中同一条中药记录，且走的是精确匹配而非语义召回（现状问题 1）。（`POST /api/search` 实测：柴胡→herb#30 `茈胡`、牡桂→herb#90 `牡桂`（别名 `桂枝`），各自 Top 命中 `match=exact`，语义召回的近邻排在其后而非之前。）
+- [x] 打开「桂枝汤」详情：变体列表中**不得出现桂枝加葛根汤 / 桂枝加厚朴杏仁汤**（方#61/72/73/74），这三方各自是独立 `formula` 且带指回桂枝汤的 alias（§5.6 D6）；搜「乌梅丸」只能看到一条方，其古制与克数变体归到同一身份（`方` 尾分裂已修）。（断言口径按原文限定在「剂量变体」区：该区不含二者；二者作为独立方出现在「加减方谱系」的子方链接里，这正是 D6 要求的呈现方式。`/api/formulas?q=乌梅丸` 整名命中仅 1 条（id 6，`方` 尾分裂已修），其变体同时含 `dose_basis=ancient` 与 `gram`；id 411 `整个乌梅丸的汤` 是另一个 canonical_name，不计入。）
+- [x] 查看「一物瓜蒂汤」（全方无 `exact`：`瓜蒂 二十个` 为 `count_only`，另 3 处 `剂量见原书` 为 `absent`，且含「表症/冷水」注记误抽）与「五苓散」（`猪苓 十八铢` 为 `unknown_unit`、`桂枝 半两` 为 `exact` 的混合方）：非 exact 药味的克数列显示 `—`/`~`、顶部出现「剂量不完全可执行」，页面上找不到任何臆造克数（FR-3 五态）。（一物瓜蒂汤 4 行全部 `—`+中文状态、无任何 `\d+g`，卡片与详情页顶部均挂「本方剂量不完全可执行」；切古制列出「二十个」。五苓散 **行级诚实通过**（`半两`→`7.5g`、`十八铢`→`—（未换算）`，`—` 行绝不出现克数），本轮回答也带「本方剂量不完全可执行」提示；**边界**：方剂卡/详情页的表头提示由详情接口的 formula 级 `dose_complete` 驱动，而后端口径是「任一变体全 `exact` 即视为完整」（五苓散的 经典配方 克数本三行全 exact）→ 该方卡片与详情页顶部**不挂**该提示。此为 M2 数据契约语义、非 M4 前端缺陷，改判需后端定口径，登记在 M4 验收记录里。）
+- [x] `general_note` 灰框样式与正文可肉眼区分（NFR-3）。（**仅组件级验证**：M3 后端 `general_note` 恒为 `null`，e2e 无真实数据可跑（spec §12.4 第 7 项即按 Vitest 验收）；`tests/unit/evidence.test.tsx` 断言灰底虚线框、「非本库内容」标注与不带角标。）
+- [x] 问诊卡三态+提交后生成主诉摘要并触发新一轮辨证；跳过路径可用。（e2e 覆盖纯键盘的三态选择与提交（`aria-checked=true` → 新的 `message-user` 含「主诉补充（问诊卡）」并重新进入辨证链）；跳过路径（关闭卡片 + 「基于不完整信息，以下辨证仅供参考」标注）由 `tests/unit/chat.test.tsx` 与 `tests/unit/refusal-intake.test.tsx` 覆盖。）
+- [x] 四大库任一筛选组合刷新页面后保持（URL 同步）；"就本条提问"跳转带上下文。（`/formulas` 勾「太阳病」→ URL 带 `six_jing=` → 回勾 → `reload()` 后仍回勾；`/herbs` 联想「牡桂」→ 详情 → 就本条提问 → `/chat?ref=herb:90` 且输入框预填「关于 牡桂（…）：」。）
+- [x] 免责条在对话、详情、导出物三处均出现（NFR-5）。（对话：`answer-body` 含服务端下发的免责句；详情：四大库详情页 `detail-disclaimer` 均已由 e2e 断言；导出物：`tests/unit/actions.test.tsx` 断言复制/导出的 Markdown 带同一句服务端免责。另有全站页脚 `disclaimer-global` 在 11 个页面状态上都渲染。）
+- [x] 问诊表单纯键盘可完成；正文/背景对比度 ≥ 4.5:1。（e2e 用 `focus()` + 空格选择 + 提交走通整条路径，未使用鼠标；axe `wcag2a`/`wcag2aa` 在 11 个页面状态（含 404、`/framework`、`/admin`、回答完成态、方剂详情、问诊卡）报出的 serious/critical 违规为 0，`color-contrast` 规则在其中，配合 M4-14 的人工对比度复核。）
+
+> **M4 验收记录（2026-11-01）**：`cd frontend && npx vitest run` → **63 passed (10 files)**；`PW_BROWSER_CHANNEL=chrome npx playwright test` → **24 passed / 0 failed / 0 skipped**（chat 7 + library 7 + a11y 10，`workers: 1`，对话套件 serial）；`npm run typecheck` 与 `npx next build` 均绿。Playwright 用 `backend/scripts/start_e2e.sh` 重建 **`zhongyi_e2e`** 真实库并起 `uvicorn`（**8001**：本机 8000 被无关应用长期占用，不可用）＋ `next dev`（3000，`BACKEND_ORIGIN=http://127.0.0.1:8001`），SSE 逐帧经 Next rewrite 穿透（`meta/progress/citation/token/done` 全部到达，这是 jsdom 覆盖不到的部分）。浏览器路径：本机无 Playwright 浏览器缓存，用 `PW_BROWSER_CHANNEL=chrome` 走系统 Chrome，**未**下载 Playwright 自带浏览器；若用 `npx playwright test`（不带该环境变量）需先 `npx playwright install chromium`。axe 扫描 11 个页面状态，wcag2a/2aa 的 serious/critical 违规为 0。本轮 e2e 另暴露并修掉一个真实前端缺陷：`RetrievalProgress` 的证据列表用 `ref_type:ref_id` 作 React key，而一轮里同一 ref 可有多条 citation（医案链 + 检索命中的 问11），浏览器控制台报重复 key——已改为带出现序号的唯一 key（内容不变）。**诚实边界**：医案抽屉的高亮缺席（§7.4「找不到则不高亮」+ case citation 无 snippet）、五苓散的表头不完全提示（后端 formula 级 `dose_complete` 取「任一变体全 exact」）已逐项写在上面的清单里；默认 `HashingEmbedder` 下的语义召回质量不在本清单范围（见 E3）；`general_note` 无真实数据、FR-14 原文兜底、管理端鉴权仍留 M5。
 
 ---
 
@@ -497,7 +499,7 @@ formula_variant_pair(formula_id, variant_a, variant_b, pairing_method /*declared
 | M1 数据底座（2.5 周，含 E1 改造） | ETL 复用 search.py 解析入库 + **方剂三层模型与身份注册表（§5.6）** + 抽取规则重写与候选队列 + pgvector 索引 + 重建/质量报告 | FR-13 七张清单全部生成；行数**按附录 A 的口径**复现并对齐：`herb` 379、`经方组成` 242、`经典配方` 250（含末行免责句需剔除）、`伤寒六经方库` 182（每行一方名，0 例外）、`金匮方剂库` **去重后 428 条 evidence**（726 原始行 / 280 唯一病段-方名组合，README 的 719 为陈旧数字已弃用）、`十二经穴位库` 经穴 335 + 奇穴 11（346 唯一穴名；335 与四节各小节声明合计完全一致）、`针灸治症取穴` 54 条、`医案` 30 例；`formula_item.herb_id` **悬空数清零**（残留项须有归一规则说明）；**身份回归**：无 `—`/`---` 幽灵方、`乌梅丸` 与 `乌梅丸方` 归一为一方、`桂枝加葛根汤` 独立成方且不得出现在 `桂枝汤` 的 variant 列表里；`dose_state` 五态分布与附录 B 实测数吻合 |
 | M2 检索与四大库 API（1 周） | 混合检索 + 方/药/穴/案 CRUD API | **结构层已验收（2026-10-30）**：PIPELINE §6 样例中可离线判定的部分——① 命中医案问11、药 Top-10 含 杏核仁/桑根白皮；② 穴 Top-5 含 风池/天柱/后溪；现代名 杏仁/桑白皮 精确落到古名条目。**语义层未验收**：默认 `HashingEmbedder` 无语义能力（① 桑白皮仅第 7、② 麻黄进不了 Top-10）；E3 评测集已把该边界量化（88 条标注 R@10 0.955，见 §10 E3），真实质量须待 BGE-M3 集成用例（`ZY_ALLOW_INTEGRATION=1`） |
 | M3 RAG 编排链（1.5 周） | 意图分类 + 5 条链 + 门禁/拒答/剂量工具/免责 + SSE | **已落地（2026-10-30）**：`backend` 下 `.venv/bin/python -m pytest tests/db/test_rag_acceptance.py -q` → **6 passed in 11.37s**；全量 `.venv/bin/python -m pytest -q` → 313 passed, 1 deselected, 1 xfailed in 274.49s（Task 8 收尾时 301 passed；终审修复轮新增 12 条用例并改 1 条既有断言的状态文案）。PIPELINE §6 可离线判定的样例已锁定：① 咳喘主诉「咳嗽气喘痰白不能平躺」医案命中问11（case hit ≥0.30），该问 top_score 0.397，给出射干麻黄汤/乌梅丸/厚朴三物汤及古制剂量；② 「发烧怕冷头痛颈项强急脉浮按什么穴」取穴覆盖 风池/后溪/天柱；③ 证据不足问句被拒答（证据低于阈值（门禁保留「方/药无整名精确命中」分支供直连调用；对话路径由 `mentions` 保证整名命中，故不在此路径触发）；拒答仍返回至多 3 条真实候选）——「乳腺癌靶向药有哪些」top_score 0.174、3 条候选、sections 与 prose 均空，「量子针灸能治癌症吗」top_score 0.281 同样拒答；克数只来自语料换算：有 dose_g 时输出「克数（古制）」，approx 行另标「近似」——如「附子 15g（一枚(炮)，近似）」；无 dose_g 时原样输出古制并以括号标注中文状态（五苓散「茯苓 十八铢（未换算）」，count_only「仅计数」、absent「未记载」），不造克数；case/syndrome/composite 按所展示方剂聚合 `dose_complete`，含非 exact 药味时置 `false` 并带「本方剂量不完全可执行」提示。**诚实边界**：无真实 LLM/AI 语义（默认 `FakeLlm`，prose 只拼接结构化字段，拒答 prose 为空仅对 FakeLlm 成立）；`refusal_threshold=0.30` 未校准，M5 用 `qa_log` 回归；实体解析是子串最长匹配而非分词；医案号只认句首 `问N`（可带空格与「的/是/号/案」后缀，「请问11岁…」不误命中；「第11问」「你好，问11」不识别）；逐味 `dose_state` 未上 wire，前端状态牌在 UI 里程碑映射；新增会话/日志表的生产建表路径未提供（测试夹具建表），留待 M5；E2 管理端鉴权未做。逐条偏差与边界见 M3 计划文档「实测记录」 |
-| M4 前端（1.5 周） | 对话页 + 四大库 + 溯源抽屉 + 问诊引导（按 §6 交互设计） | §6.7 交互验收清单逐项通过 |
+| M4 前端（1.5 周） | 对话页 + 四大库 + 溯源抽屉 + 问诊引导（按 §6 交互设计） | §6.7 交互验收清单逐项核对通过（2026-11-01：`npx vitest run` 63/63 + `PW_BROWSER_CHANNEL=chrome npx playwright test` 24 passed/0 failed/0 skipped（真实 `zhongyi_e2e` 库、后端 8001、SSE 经 Next rewrite 逐帧穿透）；axe 11 个页面状态 serious/critical = 0；typecheck 与 `next build` 绿。三处按实测写明的边界：① 医案抽屉不高亮（case citation `snippet` 为空，§7.4「找不到则不高亮」，高亮命中分支在方剂出处抽屉实测 1 个 `mark`）；② 五苓散卡片/详情页顶部不挂「本方剂量不完全可执行」（后端 formula 级 `dose_complete` 口径为「任一变体全 exact」，行级 `—`+中文状态与本轮回答提示均正常）；③ `general_note` 无真实数据、仅组件级验证。e2e 另暴露并修掉 `RetrievalProgress` 的 React 重复 key 缺陷。逐条说明见 §6.7 与 M4 验收记录 |
 | M5 打磨（1 周） | 日志看板、阈值调参、compose 部署 | NFR-1/2/3 压测达标 |
 
 ---

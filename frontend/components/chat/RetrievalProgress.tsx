@@ -24,8 +24,11 @@ export function RetrievalProgress({
       </summary>
       {citations.length > 0 && (
         <ul className="mt-1 space-y-0.5 pl-4">
-          {citations.map((citation) => (
-            <li key={`${citation.ref_type}:${citation.ref_id}`}>
+          {citations.map((citation, index) => (
+            // 同一 ref 在一轮里可能出现多条 citation（医案链 + 检索命中各一条），
+            // key 只用 ref_type:ref_id 会撞 React 的重复 key（Playwright 实测到控制台报错）；
+            // 这里按出现顺序逐条如实列出，所以用 index 保证 key 唯一。
+            <li key={`${citation.ref_type}:${citation.ref_id}:${index}`}>
               {citation.title}（{citation.anchor}）
             </li>
           ))}
