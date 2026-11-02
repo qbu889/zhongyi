@@ -111,3 +111,28 @@ def test_tail_alias_and_referencing_cases(indexed):
 def test_missing_formula_and_bad_filters(indexed):
     assert indexed.get("/api/formulas/999999").status_code == 404
     assert indexed.get("/api/formulas", params={"status": "nope"}).status_code == 422
+
+
+def test_formula_six_jing_accepts_multiple_values(indexed):
+    single = indexed.get("/api/formulas",
+                         params={"six_jing": "太阳", "limit": 100}).json()
+    multi = indexed.get("/api/formulas",
+                        params=[("six_jing", "太阳"), ("six_jing", "阳明"),
+                                ("limit", 100)]).json()
+    assert multi["total"] > single["total"]
+    assert "桂枝汤" in {i["canonical_name"] for i in multi["items"]}
+
+
+def test_formula_source_doc_filter(indexed):
+    all_total = indexed.get("/api/formulas", params={"limit": 1}).json()["total"]
+    shaohan = indexed.get("/api/formulas", params={
+        "source_doc": "02-伤寒论/伤寒六经方库.md", "limit": 100}).json()
+    assert 0 < shaohan["total"] < all_total
+    assert shaohan["items"]
+
+
+def test_formula_empty_six_jing_means_no_filter(indexed):
+    """空串筛选值等于未筛选；不能让 `startswith("")` 悄悄收窄到有六经证据的方。"""
+    plain = indexed.get("/api/formulas", params={"limit": 1}).json()["total"]
+    empty = indexed.get("/api/formulas", params={"six_jing": "", "limit": 1}).json()["total"]
+    assert empty == plain

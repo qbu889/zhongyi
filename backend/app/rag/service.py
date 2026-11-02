@@ -1,6 +1,7 @@
 """编排入口：意图 → 检索 → 门禁 → 构建 → prose → 落库。"""
 
 import json
+from collections import Counter
 
 from sqlalchemy import select
 
@@ -103,13 +104,34 @@ def answer_question(session, question: str, *, session_id: int | None = None,
     return ChatResponse(session_id=chat.id, message_id=msg.id, answer=answer)
 
 
+def _stream_error(exc: Exception) -> dict:
+    if isinstance(exc, retriever.IndexNotReady):
+        return {"code": "index_not_ready", "message": "索引尚未构建，请先调用 /api/admin/reindex"}
+    if isinstance(exc, retriever.EmbeddingMismatch):
+        return {"code": "embedding_mismatch", "message": str(exc)}
+    if isinstance(exc, ValueError):
+        return {"code": "bad_request", "message": str(exc)}
+    return {"code": "internal_error", "message": "生成失败"}
+
+
 def stream_events(session, question: str, *, session_id: int | None = None,
                   llm=None, chunk_size: int = 20):
-    resp = answer_question(session, question, session_id=session_id, llm=llm)
-    answer = resp.answer
-    yield f"event: meta\ndata: {json.dumps({'session_id': resp.session_id, 'intent': answer.intent, 'status': answer.status}, ensure_ascii=False)}\n\n"
-    for citation in answer.citations:
-        yield f"event: citation\ndata: {citation.model_dump_json()}\n\n"
-    for start in range(0, len(answer.prose), chunk_size):
-        yield f"event: token\ndata: {json.dumps({'text': answer.prose[start:start + chunk_size]}, ensure_ascii=False)}\n\n"
-    yield f"event: done\ndata: {resp.model_dump_json()}\n\n"
+    try:
+        resp = answer_question(session, question, session_id=session_id, llm=llm)
+        # 先提交：客户端中断时该轮仍可在历史中回放
+        session.commit()
+        answer = resp.answer
+        yield (f"event: meta\ndata: "
+               f"{json.dumps({'session_id': resp.session_id, 'intent': answer.intent, 'status': answer.status}, ensure_ascii=False)}\n\n")
+        counts = Counter(c.ref_type for c in answer.citations)
+        yield (f"event: progress\ndata: "
+               f"{json.dumps({'total': len(answer.citations), 'by_type': dict(counts)}, ensure_ascii=False)}\n\n")
+        for citation in answer.citations:
+            yield f"event: citation\ndata: {citation.model_dump_json()}\n\n"
+        for start in range(0, len(answer.prose), chunk_size):
+            yield (f"event: token\ndata: "
+                   f"{json.dumps({'text': answer.prose[start:start + chunk_size]}, ensure_ascii=False)}\n\n")
+        yield f"event: done\ndata: {resp.model_dump_json()}\n\n"
+    except Exception as exc:  # GeneratorExit 不继承 Exception，中断不会误报
+        payload = _stream_error(exc)
+        yield f"event: error\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"

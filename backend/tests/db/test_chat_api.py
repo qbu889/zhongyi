@@ -103,3 +103,67 @@ def test_sse_stream_emits_meta_citations_tokens_done(indexed_client):
     assert events[-1] == "done"
     assert "桂枝" in text
     assert text.count("event: token") >= 1
+
+
+def test_session_list_uses_first_question_and_last_activity(indexed_client):
+    a = indexed_client.post("/api/chat", json={"question": "桂枝汤"}).json()
+    b = indexed_client.post("/api/chat", json={"question": "风池"}).json()
+    indexed_client.post("/api/chat", json={"question": "风池怎么用",
+                                           "session_id": a["session_id"]})
+
+    data = indexed_client.get("/api/chat/sessions").json()
+    assert data["total"] == 2
+    assert data["items"][0]["id"] == a["session_id"]        # a 最后有消息
+    assert data["items"][0]["title"] == "桂枝汤"
+    assert data["items"][0]["message_count"] == 4
+    assert data["items"][1]["id"] == b["session_id"]
+
+
+def test_delete_session_keeps_qa_log_but_drops_messages(indexed_client, db_session):
+    sid = indexed_client.post("/api/chat", json={"question": "桂枝汤"}).json()["session_id"]
+
+    assert indexed_client.delete(f"/api/chat/{sid}").status_code == 204
+    assert indexed_client.get(f"/api/chat/{sid}").status_code == 404
+    assert db_session.scalar(select(func.count()).select_from(QaLog)) == 1
+    assert db_session.scalar(select(QaLog.session_id)) is None
+    assert indexed_client.delete("/api/chat/999999").status_code == 404
+
+
+import json
+
+
+def _events(text: str) -> list[tuple[str, dict]]:
+    out = []
+    for frame in text.split("\n\n"):
+        if not frame.strip():
+            continue
+        event, data = "message", []
+        for line in frame.splitlines():
+            if line.startswith("event: "):
+                event = line[7:]
+            elif line.startswith("data: "):
+                data.append(line[6:])
+        if data:
+            out.append((event, json.loads("\n".join(data))))
+    return out
+
+
+def test_sse_emits_progress_before_citations(indexed_client):
+    with indexed_client.stream("POST", "/api/chat/stream",
+                               json={"question": "桂枝汤"}) as r:
+        events = _events("".join(r.iter_text()))
+
+    names = [name for name, _ in events]
+    assert names[:2] == ["meta", "progress"]
+    assert names.index("progress") < names.index("citation")
+    progress = events[1][1]
+    assert progress["total"] >= 1
+    assert progress["total"] == sum(progress["by_type"].values())
+
+
+def test_sse_reports_index_error_as_event(client):
+    with client.stream("POST", "/api/chat/stream", json={"question": "桂枝汤"}) as r:
+        assert r.status_code == 200
+        events = _events("".join(r.iter_text()))
+    assert events and events[0][0] == "error"
+    assert events[0][1]["code"] == "index_not_ready"

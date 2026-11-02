@@ -189,3 +189,19 @@ def test_case_without_formula_does_not_invent_one(indexed):
 def test_case_404_and_limit_validation(indexed):
     assert indexed.get("/api/cases/999999").status_code == 404
     assert indexed.get("/api/cases", params={"limit": 101}).status_code == 422
+
+
+def test_herb_taste_group_accepts_multiple_values(indexed):
+    sour = indexed.get("/api/herbs", params={"taste_group": "酸", "limit": 100}).json()
+    sweet = indexed.get("/api/herbs", params={"taste_group": "甘", "limit": 100}).json()
+    both = indexed.get("/api/herbs", params=[
+        ("taste_group", "酸"), ("taste_group", "甘"), ("limit", 100)]).json()
+    assert both["total"] == sour["total"] + sweet["total"]
+
+
+def test_herb_empty_taste_group_means_no_filter(indexed):
+    """空串筛选值等于未筛选；不能让 `IN ('')` 把结果清零。"""
+    plain = indexed.get("/api/herbs", params={"limit": 1}).json()["total"]
+    empty = indexed.get("/api/herbs", params={"taste_group": "", "limit": 1}).json()["total"]
+    assert empty == plain
+

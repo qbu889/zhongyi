@@ -161,7 +161,8 @@ def _items_out(items: list[FormulaItem], herb_names: dict[int, str]) -> list[Ite
 @router.get("", response_model=FormulaListResponse)
 def list_formulas(
     q: str | None = Query(default=None, max_length=100),
-    six_jing: str | None = Query(default=None, max_length=20),
+    six_jing: list[str] | None = Query(default=None),
+    source_doc: str | None = Query(default=None, max_length=200),
     bing_duan: str | None = Query(default=None, max_length=100),
     status: Literal["confirmed", "candidate", "split_parent"] | None = Query(default=None),
     kind: Literal["single", "modified", "pair"] | None = Query(default=None),
@@ -174,10 +175,16 @@ def list_formulas(
     if q:
         alias_ids = select(FormulaAlias.formula_id).where(FormulaAlias.name.contains(q))
         stmt = stmt.where(or_(Formula.canonical_name.contains(q), Formula.id.in_(alias_ids)))
-    if six_jing:
+    values = [v for v in (six_jing or []) if v]
+    if values:
+        conds = [FormulaEvidence.six_jing.startswith(j, autoescape=True)
+                 for j in values]
         stmt = stmt.where(Formula.id.in_(
-            select(FormulaEvidence.formula_id).where(
-                FormulaEvidence.six_jing.startswith(six_jing, autoescape=True))))
+            select(FormulaEvidence.formula_id).where(or_(*conds))))
+    if source_doc:
+        stmt = stmt.where(Formula.id.in_(
+            select(FormulaEvidence.formula_id)
+            .where(FormulaEvidence.source_doc == source_doc)))
     if bing_duan:
         stmt = stmt.where(Formula.id.in_(
             select(FormulaEvidence.formula_id).where(FormulaEvidence.bing_duan == bing_duan)))
