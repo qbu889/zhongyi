@@ -55,7 +55,7 @@ function QualityReportBody() {
   // 导出链接仍指 parse_failure_details（可下钻的行），文案逐字「导出明细 CSV」不说谎。
   const sections: {
     id: string; title: string; headers: string[]; rows: Cell[];
-    exportList?: string; exportLabel?: string; hint?: string; pathColumn?: number;
+    exportList?: string; exportLabel?: string; hint?: string;
   }[] = [
     {
       id: "herb_diff", title: "① 药材差异", exportList: "herb_diff",
@@ -74,7 +74,9 @@ function QualityReportBody() {
       // 两列（原因/条数；列名沿用 brief 页稿的「数量」，不自创新规则）。行序：brief 未给排序口径，
       // 按裁定默认——条数降序、再按原因字典型序。导出链接不在这里换 list：仍走
       // adminCsvHref("parse_failure_details")（后半句「导出给能下钻的行」），
-      // 文案逐字「导出明细 CSV」，配 hint 说明屏/下载两种形状。R-M5-2 的源路径合成格随明细退出屏面。
+      // 文案逐字「导出明细 CSV」，配 hint 说明屏/下载两种形状（hint 经 aria-describedby 附到表格，F-6）。
+      // R-M5-20（F-1）：R-M5-2 的源路径合成格已整段删除——③ 屏面不再有明细行，
+      // 「显示路径 + 行号 + 可复制」的需求改由 T13（/admin/pending 的真实行）承载。
       id: "parse_failures", title: "③ 解析失败（按原因计数）",
       exportList: "parse_failure_details", exportLabel: "导出明细 CSV",
       hint: "屏上按原因计数，导出给到可下钻的明细行。",
@@ -116,7 +118,7 @@ function QualityReportBody() {
     <div data-testid="quality-report">
       {sections.map((section) => <QualitySection key={section.id} {...section} />)}
       <p className="mt-4 text-xs text-ink/70">
-        ⑤⑥⑦ 是聚合视图，按规格 §4.1 不提供 CSV 导出；要下钻待审真实行请去「候选方名」页。
+        ⑤⑥⑦ 不提供导出；③ 屏上按原因计数，导出给到明细行。
       </p>
     </div>
   );

@@ -90,12 +90,21 @@ const emptyQualityReport: QualityReport = {
   dose_state_distribution: {},
   pending_queue: { total: 0, by_decision: {}, by_reason: {} },
 };
-/** R-M5-19 判别夹具：③ 的按原因计数给两行（57/3，取值用裁定原文给的示例聚合）。
- * 注：后端 quality.py:78-81 会把 no_formula_name 排除出 ③，这里只是渲染层夹具——
- * 屏面断言"组件把响应里的计数照原样渲染出来"，与后端筛选口径无关。 */
+/** R-M5-19 判别夹具：③ 的按原因计数给三行。两处刻意的形状（修复轮 1，F-3/F-4）：
+ * 1) F-4：原因值只取 `build_quality_report` 真会发进 ③ 的那些——`quality.py:78-81` 用
+ *    `reason != "no_formula_name"` 过滤，剩下的闭集来自 `loaders.py:249-255`
+ *    （multi_name_row / pair_without_composition / no_composition），夹具喂的每条都发得出来；
+ *    旧夹具的 `no_formula_name: 57` 是后端不可能发的值，已换掉。
+ * 2) F-3：喂入顺序**故意乱序**且含一对同计数（57/57，且字典序靠前那条排在后面）——
+ *    旧夹具 57→3 本身就等于降序，「逐格断言行序」对"有没有 sort"不可判别；现在不 sort、
+ *    sort 错方向、同计数不按字典型序，三种回归都会打脸这条断言。 */
 const countQualityReport: QualityReport = {
   ...qualityReport,
-  parse_failures: [{ reason: "no_formula_name", count: 57 }, { reason: "multi_name_row", count: 3 }],
+  parse_failures: [
+    { reason: "multi_name_row", count: 3 },
+    { reason: "pair_without_composition", count: 57 },
+    { reason: "no_composition", count: 57 },
+  ],
 };
 /** ③ 的节标题逐字（caption=可访问名=标题，指针 §4/concern 4 裁定）：判别用例锁串不锁形状。 */
 const FAILURES_TITLE = "③ 解析失败（按原因计数）";
@@ -499,26 +508,10 @@ describe("QualitySection", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("源文件#行号合成一格：列数仍等于表头、复制的是路径本身、且不是链接", async () => {
-    const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-    render(<QualitySection id="parse_failure_details" title="③ 解析失败明细"
-      headers={["候选方名", "源文件#行号", "原因", "判定"]} pathColumn={1}
-      rows={[["甲", "03-金匮/方剂库.md", "12", "multi_name_row", "pending"]]}
-      exportList="parse_failure_details" />);
-    const table = screen.getByRole("table");
-    // R-M5-2：源行号被并进路径格，不出第五列——表头 4、单元格 4，相等才不被 axe 判死。
-    expect(within(table).getAllByRole("columnheader")).toHaveLength(4);
-    expect(within(table).getAllByRole("cell")).toHaveLength(4);
-    expect(within(table).getByText("03-金匮/方剂库.md#12")).toBeInTheDocument();
-    // §13-8：降级为"显示路径 + 行号 + 可复制"，绝不做成跳源文件的链接。
-    expect(within(table).queryByRole("link", { name: /方剂库/ })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "复制源文件路径" }));
-    expect(writeText).toHaveBeenCalledWith("03-金匮/方剂库.md#12");
-    expect(await screen.findByRole("status")).toHaveTextContent("已复制源路径");
-    vi.unstubAllGlobals();
-  });
+  // F-1（R-M5-20）：随 `pathColumn`「路径#行号 + 复制按钮」实现一起删除的组件级用例
+  // 「源文件#行号合成一格：列数仍等于表头、复制的是路径本身、且不是链接」（原 502-521 行，
+  // 共 1 条用例）。该实现在生产里已无任何调用者（③ 屏面不渲染明细行），R-M5-2/§13-8 的
+  // 需求由 T13 承载（见修复轮 1 报告），不是覆盖丢失。
 });
 
 describe("质量报告页", () => {
@@ -559,10 +552,11 @@ describe("质量报告页", () => {
     await screen.findByTestId("quality-report");
     const table = screen.getByRole("table", { name: FAILURES_TITLE });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["原因", "数量"]);
-    expect(within(table).getByRole("cell", { name: "57" })).toBeInTheDocument();
-    // 裁定默认的行序：条数降序、再按原因字典型序——逐格断言渲染顺序。
+    expect(within(table).getAllByRole("cell", { name: "57" })).toHaveLength(2);
+    // F-3：夹具喂的是乱序 + 同计数对（multi:3, pair_without:57, no_composition:57），
+    // 逐格断言才真有判别力——不 sort、sort 反方向、同计数不按字典型序，都会在这条上失败。
     expect(within(table).getAllByRole("cell").map((c) => c.textContent))
-      .toEqual(["no_formula_name", "57", "multi_name_row", "3"]);
+      .toEqual(["no_composition", "57", "pair_without_composition", "57", "multi_name_row", "3"]);
     // 明细面整体缺席：R-M5-2 合成格若还在屏上，必然带这两列表头与「路径#行号」行。
     expect(screen.queryByRole("columnheader", { name: "候选方名" })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "源文件#行号" })).not.toBeInTheDocument();
@@ -570,6 +564,9 @@ describe("质量报告页", () => {
     // 分工说明行逐字在场。
     expect(within(table.closest("section") as HTMLElement)
       .getByText("屏上按原因计数，导出给到可下钻的明细行。")).toBeInTheDocument();
+    // F-6（Minor 13）：该说明经 aria-describedby 附在表格上——读表格的辅助技术用户
+    // 能听到「屏与下载不同形」，而不是只看得到一张无上下文的表。
+    expect(table).toHaveAccessibleDescription("屏上按原因计数，导出给到可下钻的明细行。");
   });
 
   it("③ 的导出链接 href 仍来自 adminCsvHref(\"parse_failure_details\")", async () => {
@@ -648,6 +645,34 @@ describe("质量报告页", () => {
     expect((await screen.findAllByText("本库暂无记录。")).length).toBeGreaterThan(0);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(/报告加载失败/)).not.toBeInTheDocument();
+    // F-6（Minor 13）：③ 空态下表格不存在，分工说明行也不许渲染——描述不存在的东西是谎。
+    expect(screen.queryByText("屏上按原因计数，导出给到可下钻的明细行。")).not.toBeInTheDocument();
+  });
+
+  // —— F-5（Minor 4）：加载中态是规格 §9:123 列为不可合并的独立状态面，此前零断言 ——
+  it("加载中态：quality-report 在途期间渲染 role=status 的读取中文案，且不与其他状态面同屏", async () => {
+    // 观测在途用「持有由测试释放的 promise」，不用计时器（同 ReindexPanel 的 running 用例）。
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    server.use(
+      http.get("/api/admin/session", () => HttpResponse.json(
+        { enabled: true, authenticated: true, expires_at: 1 })),
+      http.get("/api/admin/quality-report", async () => {
+        await pending;
+        return HttpResponse.json(qualityReport);
+      }),
+    );
+    render(<AdminQualityPage />);
+    const loading = await screen.findByText("读取质量报告…");
+    expect(loading).toHaveAttribute("role", "status");
+    // 加载中是独立面：既没有表（成功面）、也没有 alert（失败面）。
+    expect(screen.queryByTestId("quality-report")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("table")).toHaveLength(0);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    release();
+    await screen.findByTestId("quality-report");
+    expect(screen.queryByText("读取质量报告…")).not.toBeInTheDocument();
   });
 
   it("quality-report 401：交回 AdminShell 重新探针，不查标签表也不显示加载失败", async () => {
@@ -773,6 +798,34 @@ describe("LogsDashboard", () => {
     expect(within(alert).getByRole("button", { name: "重试" })).toBeInTheDocument();
     await user.click(within(alert).getByRole("button", { name: "重试" }));
     await waitFor(() => expect(requests).toBe(2));
+  });
+
+  // —— F-5（Minor 4）：加载中态是规格 §9:123 列为不可合并的独立状态面，此前零断言 ——
+  it("加载中态：summary 在途期间渲染 role=status 的读取中文案，且不与其他状态面同屏", async () => {
+    // summary 未 resolve → Promise.all 未到 → 概览卡（成功面）不许出现；
+    // 观测在途用持有 promise 的方式，不用计时器。
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    server.use(
+      http.get("/api/admin/logs/summary", async () => {
+        await pending;
+        return HttpResponse.json(
+          { queries_total: 0, queries_recent: 0, refusal_rate: 0, avg_hit_count: 0, window_days: 7 });
+      }),
+      http.get("/api/admin/logs/refusals", () => HttpResponse.json({ window_days: 7, limit: 50, items: [] })),
+      http.get("/api/admin/logs", () => HttpResponse.json({ total: 0, limit: 50, offset: 0, items: [] })),
+    );
+    render(<LogsDashboard />);
+    const dash = screen.getByTestId("logs-dashboard");
+    const loading = await within(dash).findByText("读取问答日志…");
+    expect(loading).toHaveAttribute("role", "status");
+    // 加载中面：四卡（成功面）与 alert（失败面）都不得同屏。
+    expect(within(dash).queryByText("累计提问")).not.toBeInTheDocument();
+    expect(within(dash).queryByRole("alert")).not.toBeInTheDocument();
+
+    release();
+    await within(dash).findByText("累计提问");
+    expect(within(dash).queryByText("读取问答日志…")).not.toBeInTheDocument();
   });
 });
 
