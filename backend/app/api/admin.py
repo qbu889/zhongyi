@@ -6,17 +6,19 @@ router 上，而登录端点必须能匿名访问；不拆就得给每条路由�
 指向它们，改名等于同时打断三条链路。
 """
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone  # timezone 供后续任务用
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.admin import auth
 from app.admin.quality import build_quality_report
 from app.admin.reindex import run_reindex
-from app.db.models import PendingFormulaName
+from app.db.models import Formula, FormulaAlias, PendingFormulaName
 from app.db.session import get_session
 
 public_router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -136,6 +138,56 @@ def list_pending(
         stmt.order_by(PendingFormulaName.id).limit(limit).offset(offset)))
     return {"total": total, "limit": limit, "offset": offset,
             "items": [_pending_item(r).model_dump() for r in rows]}
+
+
+DECIDED_BY = "admin"          # 单维护者假设；E2 引入账号后改存真实用户
+ALIAS_KIND = "人工归并"       # 不能是「加减写法」：retriever.py:62 显式排除该 kind
+
+
+class DecisionBody(BaseModel):
+    action: Literal["merged", "confirmed_new", "noise"]
+    target_formula_id: int | None = None
+    name: str | None = Field(default=None, max_length=200)
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/pending/{pending_id}/decision")
+def decide_pending(
+    pending_id: int,
+    body: DecisionBody,
+    session: Session = Depends(get_session),
+) -> dict:
+    row = session.get(PendingFormulaName, pending_id)
+    if row is None:
+        raise HTTPException(404, detail={"code": "pending_not_found", "message": "该候选记录不存在"})
+
+    alias_created: bool | None = None
+    if body.action == "merged":
+        if not body.target_formula_id:
+            raise HTTPException(422, detail={"code": "invalid_decision_payload",
+                                             "message": "归并必须指定目标方 target_formula_id"})
+        target = session.get(Formula, body.target_formula_id)
+        if target is None:
+            raise HTTPException(404, detail={"code": "formula_not_found", "message": "目标方不存在"})
+        # 归并是唯一「立即生效」的动作：精确通道直接查 formula_alias，不经索引，所以不用重建。
+        # 用 RETURNING 而不是 rowcount 判「是否真插了行」：psycopg3+SQLAlchemy2.1 下
+        # ON CONFLICT DO NOTHING 的 rowcount 恒为 -1（brief 原写法在此栈上永远 False）。
+        stmt = pg_insert(FormulaAlias).values(
+            formula_id=target.id, name=row.raw_name, doc=row.doc, kind=ALIAS_KIND,
+        ).on_conflict_do_nothing(index_elements=["formula_id", "name", "doc"]
+                                 ).returning(FormulaAlias.id)
+        alias_created = session.execute(stmt).first() is not None
+    elif body.action == "confirmed_new":
+        if not (body.name or "").strip():
+            raise HTTPException(422, detail={"code": "invalid_decision_payload",
+                                             "message": "确认为独立方必须填规范名"})
+        row.decided_name = body.name.strip()
+
+    row.decision = body.action
+    row.decided_by = DECIDED_BY
+    row.decided_at = func.now()
+    session.commit()
+    return {"item": _pending_item(row).model_dump(), "alias_created": alias_created}
 
 
 # 本任务先按无 body 实现（与一期一致）；`ReindexBody`/锁/结构化 500 在 Task 8 再叠上来。
