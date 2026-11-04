@@ -13,5 +13,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/acupoints", label: "针灸" },
   { href: "/cases", label: "医案" },
   { href: "/framework", label: "辨证框架", disabled: true },
-  { href: "/admin", label: "管理", disabled: true },
+  // T11 起 /admin 概览页上线（控制人裁定：顶栏「管理」入口由本任务认领，见 task-11 指针 §3）；
+  // /admin/quality 等子页 T12–T14 陆续接上，入口本身不再禁用。
+  { href: "/admin", label: "管理" },
 ];

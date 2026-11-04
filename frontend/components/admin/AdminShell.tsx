@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { LoginCard } from "@/components/admin/LoginCard";
 import { ApiError } from "@/lib/api";
@@ -19,6 +19,19 @@ const NAV = [
  * 说"你口令错了"。这一条与 T11–T14 的「数据端点 401 不查标签表」是同一约束。 */
 function probeDetail(error: unknown): string {
   return error instanceof ApiError ? `${error.code} · HTTP ${error.status}` : "请求未送达或响应无法解析";
+}
+
+/** 数据端点 401（cookie TTL 1800s 会话中途过期）时，子页请求「重新探针」的唯一通道。
+ * 门状态机只有 AdminShell 这一份探针（`probe()` 不对外暴露），页面里自己调
+ * `adminProbe()` 会让状态分叉（T10 评审立的规矩，T11 指针 §4 是第一个消费者）。
+ * 默认值是 no-op：脱离 AdminShell 的独立组件单测（admin-panels.test 前几例）不因此报错；
+ * 401 行为本身由带 AdminShell 的用例覆盖。 */
+export const AdminReauthContext = createContext<() => void>(() => {});
+
+/** 子页在 catch 里命中 `isAdminUnauthorized(error)` 后调用返回值：
+ * 回到登录态由门自己接管渲染，页面不显示任何错误码标签。 */
+export function useAdminReauth(): () => void {
+  return useContext(AdminReauthContext);
 }
 
 export function AdminShell({ title, path = "", children }: {
@@ -76,7 +89,9 @@ export function AdminShell({ title, path = "", children }: {
           </div>
         )}
         {gate === "locked" && <LoginCard onSignedIn={probe} />}
-        {gate === "ready" && children}
+        {gate === "ready" && (
+          <AdminReauthContext.Provider value={probe}>{children}</AdminReauthContext.Provider>
+        )}
       </div>
     </div>
   );

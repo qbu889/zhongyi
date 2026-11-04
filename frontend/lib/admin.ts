@@ -168,6 +168,15 @@ export function adminErrorLabel(error: unknown): string {
     ? ADMIN_ERROR_LABELS[error.code] ?? error.message
     : "请求失败";
 }
+
+/** 数据端点 401 的谓词。`require_admin`（backend/app/api/admin.py:51）对过期会话回
+ * `{code:"admin_unauthorized", message:"请先登录管理端"}`——与登录卡口令错误是同一个 code、
+ * 不同的话术。cookie TTL 1800s，会话中途过期时任何 adminGet/adminPost 都可能带回这个 401；
+ * 把它喂进 ADMIN_ERROR_LABELS 会对什么都没输的维护者说"口令不正确"。
+ * 唯一正确反应：命中本谓词 → 调 AdminShell 提供的重新探针回登录态，**不查标签表**。
+ * T11–T14 的页面一律复用本谓词，不各自重写 status===401 判断。 */
+export const isAdminUnauthorized = (error: unknown): boolean =>
+  error instanceof ApiError && error.status === 401;
 /** 门状态五值（规格 §9:123 把「未启用」与「加载失败」列为两条独立状态面、§11:152 要求
  * 「未启用 / 未登录 / 加载失败」是三态三文案，均不得合并）：
  * `checking` 探针在途；`unreachable` 探针失败且**不是** 503 admin_disabled（后端挂了、502、
