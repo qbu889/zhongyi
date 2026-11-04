@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminReauth } from "@/components/admin/AdminShell";
 import {
@@ -30,25 +30,76 @@ export function LogsDashboard() {
   const [list, setList] = useState<LogList | null>(null);
   const [intent, setIntent] = useState("");
   const [error, setError] = useState("");
+  /** 整枝评审 F-4：`intent` 筛选的陈旧响应守卫，写法与 `app/admin/pending/page.tsx:49-64`
+   * 同一个模式（自增序号，响应落地时先比对"这还是最新那次请求吗"，不是就整条丢弃）——
+   * 不发明第三种，不用 `AbortController`（同一处缺陷的同一份裁决），不用 `setTimeout`/固定延时。
+   *
+   * 缺陷本体（改前的形状）：`load()` 在 `intent` 变化时把 summary / refusals / logs **三个**请求
+   * 全部重跑，`Promise.all` 后无条件写覆盖、没有先后判据 ⇒ 晚到的旧筛选结果会持久覆盖新视图，
+   * 就是 pending 页刚修掉的"筛选框显示新值、表格显示旧结果"。而其中 summary 与 refusals
+   * 与 `intent` **无关**（参数只有 window_days），跟着白跑一遍只把交叠窗口扩大三倍。
+   * 所以这里拆成两条通道：概览（summary+refusals）只在挂载与显式重试时取，明细（logs）
+   * 随 `intent` 重取并带守卫。序号各一条——两条通道各自覆盖各自的字段，不会互相追。 */
+  const listGeneration = useRef(0);
+  const overviewGeneration = useRef(0);
+  /** 401 只让门重探针一次：拆成两条通道后，两个在途请求会各自撞见同一个过期会话，
+   * 各调一次 `reprobe()` 就是两次探针（原单 `load()` 形状只发一次）。门是同一份状态，
+   * 重复探针没有新信息；组件在门翻到 locked 时整棵卸载，ref 随卸载归零，不存在"一次永久"。 */
+  const reauthSent = useRef(false);
+  const reauthOnce = useCallback(() => {
+    if (reauthSent.current) return;
+    reauthSent.current = true;
+    reprobe();
+  }, [reprobe]);
 
-  const load = useCallback(() => {
+  /** 概览两发（与 intent 无关）：窗口写死在参数里，只随挂载/重试重取。 */
+  const loadOverview = useCallback(() => {
+    const current = ++overviewGeneration.current;
     setError("");
     Promise.all([
       adminGet<LogsSummary>(`/api/admin/logs/summary?window_days=${REQUEST_WINDOW_DAYS}`),
       adminGet<RefusalList>(`/api/admin/logs/refusals?window_days=${REQUEST_WINDOW_DAYS}`),
-      adminGet<LogList>(
-        `/api/admin/logs?limit=${REQUEST_LIMIT}${intent ? `&intent=${intent}` : ""}`),
     ])
-      .then(([sum, rank, rows]) => {
-        setSummary(sum); setRefusals(rank); setList(rows);
+      .then(([sum, rank]) => {
+        // 陈旧响应丢弃：晚到的旧概览不许覆盖最新一次的视图。
+        if (current !== overviewGeneration.current) return;
+        setSummary(sum); setRefusals(rank);
       })
       .catch((caught: unknown) => {
-        // 指针 §1：三端点任一 401 = 会话过期，交回 AdminShell 重新探针，不查标签表。
-        if (isAdminUnauthorized(caught)) { reprobe(); return; }
+        if (current !== overviewGeneration.current) return;
+        // 指针 §1：401 = 会话过期，交回 AdminShell 重新探针，不查标签表。
+        if (isAdminUnauthorized(caught)) { reauthOnce(); return; }
         setError(adminErrorLabel(caught));
       });
-  }, [intent, reprobe]);
-  useEffect(load, [load]);
+  }, [reauthOnce]);
+  useEffect(loadOverview, [loadOverview]);
+
+  /** 明细那一发才随 `intent` 重取；换筛选时先收起上一屏的行（加载中、失败、空、有数据是四面，
+   * 不同时出现——与 pending 页同一口径），所以守卫不只是防覆盖，也防"新筛选配旧结果"。 */
+  const loadList = useCallback(() => {
+    const current = ++listGeneration.current;
+    setList(null);
+    adminGet<LogList>(
+      `/api/admin/logs?limit=${REQUEST_LIMIT}${intent ? `&intent=${intent}` : ""}`)
+      .then((rows) => {
+        if (current !== listGeneration.current) return;
+        setList(rows);
+      })
+      .catch((caught: unknown) => {
+        if (current !== listGeneration.current) return;
+        if (isAdminUnauthorized(caught)) { reauthOnce(); return; }
+        setError(adminErrorLabel(caught));
+      });
+  }, [intent, reauthOnce]);
+  useEffect(loadList, [loadList]);
+
+  /** 失败面的重试按钮：两条通道一起重取（改前是一个 `load()` 带全部三发，语义不变）。
+   * 清错误只在概览侧做（`loadOverview` 开头 `setError("")`）：明细重取成功不该把概览的
+   * 真实失败面抹掉——那会让"四卡没数据"变成静默空白。 */
+  const retry = useCallback(() => {
+    loadOverview();
+    loadList();
+  }, [loadOverview, loadList]);
 
   return (
     <div data-testid="logs-dashboard">
@@ -59,7 +110,7 @@ export function LogsDashboard() {
 
       {error && (
         <p role="alert" className="mt-2 text-sm text-cinnabar">日志加载失败：{error}
-          <button type="button" onClick={load} className="ml-2 underline">重试</button></p>
+          <button type="button" onClick={retry} className="ml-2 underline">重试</button></p>
       )}
       {!error && !summary && <p role="status" className="mt-3 text-sm text-ink/70">读取问答日志…</p>}
 
@@ -120,6 +171,10 @@ export function LogsDashboard() {
 
       {/* limit 取明细响应回显值，不是写死的 50（指针 §2）。 */}
       <h2 className="mt-5 font-serif text-lg">最近 {list ? list.limit : REQUEST_LIMIT} 条</h2>
+      {/* F-4 的附带面：明细通道现在换筛选时会自己收起上一屏的行（不给"新筛选配旧结果"留窗口），
+        所以它必须有一张自己的加载中面——否则那一窗口在屏上就是"数据不见了"，
+        与 pending 页修复轮 3 诊断出的同一个观感缺陷。概览那句「读取问答日志…」管概览两发。 */}
+      {!error && !list && <p role="status" className="mt-1 text-sm text-ink/70">读取日志明细…</p>}
       {list && list.items.length === 0 && (
         <p className="mt-1 text-sm text-ink/70">本库暂无问答日志。</p>
       )}

@@ -47,7 +47,19 @@ async function login(page: Page) {
   await page.getByRole("button", { name: "进入管理端" }).click();
   // 登录成功后门重新探针：locked 态的登录卡必须消失（换成内容区），
   // 否则后面的用例都会对着登录卡空断言。
-  await expect(box).toBeHidden();
+  // —— F-6 第 1 条：这一句此前"不可能给出可读的失败"。口令错、或 8001 上复用着一个没配
+  // ADMIN_TOKEN 的旧后端时，登录卡在 15s 超时里一直可见，报的却是干巴巴的 "expected hidden"。
+  // 补 message 点名失败时该查什么（**不放宽**：断言本体一字未改，只是让它失败时给得出方向）。
+  // message 走 `expect(locator, message)` 的第二参形式（与本文件 `tokenBox` 同一写法）——
+  // 本版 Playwright 的 `toBeHidden` **选项**类型里没有 `message`，写进 options 会 typecheck 失败。
+  await expect(box, "登录卡应被 ready 态的内容区替换。一直可见 = 登录没成功：先查 E2E_ADMIN_TOKEN 是否与后端 webServer 的 ADMIN_TOKEN 同值（口令错回 401、门留在 locked），再查 8001 是不是复用了一个未配 ADMIN_TOKEN 的旧后端（那样登录端点自己就 503 admin_disabled，登录卡反而不会出现）。")
+    .toBeHidden();
+  // —— F-6 第 1 条的另一半：门的**终态**正向可见断言。`admin-logout` 只在 `gate === "ready"`
+  // 时渲染（F-2 新接的登出入口，AdminShell 全局导航区），所以它就是"门真的翻到 ready"的判别位
+  // ——比"登录卡不见了"强：不可见还可能是页面整块没渲染，而 ready 的正面证据是这枚按钮在屏上，
+  // 且四个 /admin 页都有，不会把这一支绑死在概览页的某个具体卡片上。
+  await expect(page.getByTestId("admin-logout"), "ready 态的正面判别位（登出入口）不在屏上 = 门没翻到 ready；后面的用例都会对着登录卡空断言")
+    .toBeVisible();
 }
 
 // —— 登录门不变量（规格 §9；指针 §4：不得退化成"只断言有登录卡"）——
@@ -96,6 +108,42 @@ test("口令错误保留 401 文案", async ({ page }) => {
   await expect(page.getByRole("status")).toContainText("口令不正确");
 });
 
+test("登出入口真的结束会话：退出登录后回登录卡，服务端 cookie 同时失效", async ({ page }) => {
+  // 整枝评审 F-2：`adminLogout`（lib/admin.ts:155）与 `POST /api/admin/session/logout`
+  //（admin.py:86-89）此前**零消费者**——规格 §4 立这条端点的理由逐字是"HttpOnly cookie 前端删
+  // 不掉，必须由服务端下发清除指令"，而 cookie 是 `max_age=1800` 的**持久** cookie（关掉浏览器
+  // 也活 30 分钟）。没有入口时，共用机器的维护者没有任何办法提前结束会话。
+  // 单测（admin-gate.test.tsx）能证明"前端发了那一发 POST 并且门翻回 locked"，但它给不出
+  // **HttpOnly cookie 真的被服务端清掉**这一条——那是本用例唯一能提供的证据，打的是真后端。
+  await page.goto("/admin");
+  const box = await tokenBox(page);
+  await box.fill(TOKEN);
+  await page.getByRole("button", { name: "进入管理端" }).click();
+  const logoutButton = page.getByTestId("admin-logout");
+  await expect(logoutButton).toBeVisible();
+  // 登出之前先把"已登录"坐实：同一浏览器上下文里数据端点是 200——否则末尾那句 401 什么都
+  // 证明不了（它可能从一开始就是 401）。
+  expect((await page.request.get("/api/admin/quality-report")).status(),
+    "登录后同一上下文的数据端点必须 200").toBe(200);
+
+  // 登出走真实网络往返：等 UI 自己发出的那一发 POST 落地（测试不发第二条登出请求）。
+  const logoutResponse = page.waitForResponse((res) =>
+    res.url().endsWith("/api/admin/session/logout") && res.request().method() === "POST");
+  await logoutButton.click();
+  expect((await logoutResponse).status(), "登出端点的既定形状是 204 无响应体").toBe(204);
+
+  // 门的终态：回到登录卡，ready 态才渲染的登出入口随之收起。
+  await expect(page.getByRole("textbox", { name: "管理端口令" })).toBeVisible();
+  await expect(logoutButton).toHaveCount(0);
+  // 已登录态的数据面一律不再渲染（fail-closed 方向，与上面 GATE_ROUTES 的未登录判据同一口径）。
+  await expect(page.getByTestId("reindex-panel")).toHaveCount(0);
+  await expect(page.getByTestId("version-table")).toHaveCount(0);
+  // 核心不变量：服务端真的不再认这把 cookie——同一上下文重打数据端点必须 401。
+  const after = await page.request.get("/api/admin/quality-report");
+  expect(after.status(), "登出后同一 cookie 必须立刻失效，否则 1800s 的持久 cookie 还在生效").toBe(401);
+  expect((await after.json()).detail.code).toBe("admin_unauthorized");
+});
+
 test("质量报告七张清单渲染，且导出链接可用", async ({ page }) => {
   await login(page);
   await page.goto("/admin/quality");
@@ -131,7 +179,24 @@ function formatRefusalRate(rate: number): string {
   return `${Math.round(pct)}%`;
 }
 
-test("问答日志页：四卡数字来自响应本身，含拒答榜、明细表与隐私提示", async ({ page }) => {
+test("问答日志页：四卡数字来自响应本身，含拒答榜、明细表与隐私提示", async ({ page, request }) => {
+  // —— 整枝评审 F-5：本用例**自带数据**。改前的形状在单跑 `--project=admin` 时不可能失败：
+  // `scripts/e2e_bootstrap.py` 不种 `qa_log`，全仓唯一写它的路径是 `app/rag/service.py:100`
+  // （= app project 的 chat 用例），所以只跑 admin 时 `qa_log` 是空表，下面两处 `if` 双双落到
+  // `else`，"一条日志都没渲染也算通过"——那不是诚实的空态断言，是"没有东西可断"；而这层跨
+  // project 的数据依赖规格 §11 从没写过（现已补进规格 §11 与 §13）。
+  // 修法：用例内先经 API 发一次 `POST /api/chat`（8001，只写 `zhongyi_e2e`）造一条**被拒答**的
+  // 日志——问句沿用 M4 的 e2e 拒答用例（`e2e/chat.spec.ts:134`），它在本库确定拒答。
+  // 于是明细表与拒答榜同时有行，两支 `else` 一起删掉。
+  // 收紧而不是放宽：删掉的是"零行也算过"的兜底支，换上"响应有几条就渲染几条、逐条对到单元格"
+  // 的正向判据；行数不写死（取响应真实条数），语料进位不会让它变红。
+  const seededQuery = "乳腺癌靶向药有哪些";
+  const chatResponse = await request.post("/api/chat", { data: { question: seededQuery } });
+  expect(chatResponse.status(), "种子：POST /api/chat 必须落一条 qa_log（索引未就绪会 409）").toBe(200);
+  const chatBody = await chatResponse.json();
+  // 种子必须是**拒答**那一轮，否则 `/logs/refusals` 拿不到行、下面的正向断言又成空跑。
+  expect(chatBody.answer.status, `种子问句「${seededQuery}」在本库必须是 refused`).toBe("refused");
+
   await login(page);
   await page.goto("/admin/logs");
   const dash = page.getByTestId("logs-dashboard");
@@ -154,37 +219,65 @@ test("问答日志页：四卡数字来自响应本身，含拒答榜、明细�
   expect(cardTexts[3]).toContain("平均命中");
   expect(cardTexts[3]).toContain(String(summary.avg_hit_count));
 
-  // 拒答榜：渲染必须与 /logs/refusals 响应同形（有行则有表，无行则有诚实空态）。
+  // —— 拒答榜：有数据那一支（`else` 兜底支已随 F-5 删除，条数取响应真实值）——
   const refusals = await (await page.request.get("/api/admin/logs/refusals?window_days=7")).json();
   await expect(dash.getByRole("heading", { name: "高频拒答词（语料补缺清单）" })).toBeVisible();
-  if (refusals.items.length > 0) {
-    const top = refusals.items[0];
-    const topRows = dash.getByRole("row").filter({ hasText: top.query });
-    await expect(topRows).not.toHaveCount(0);
-    await expect(topRows.first()).toContainText(String(top.count));
-  } else {
-    await expect(dash.getByText("窗口内没有拒答记录。")).toBeVisible();
+  expect(refusals.items.length, "种子轮之后拒答榜必须有行（本用例自带数据，不依赖 app project 先跑）")
+    .toBeGreaterThan(0);
+  expect(refusals.items.map((row: { query: string }) => row.query),
+    `种子问句必须进拒答榜，实际榜单：${JSON.stringify(refusals.items.map((row: { query: string }) => row.query))}`)
+    .toContain(seededQuery);
+  const refusalTable = dash.getByRole("table", { name: /按原文分组计数/ });
+  // 渲染行数 == 响应条数 + 表头一行：少一行（静默丢行）与多一行（重复渲染）都在这条上翻红。
+  await expect(refusalTable.getByRole("row")).toHaveCount(refusals.items.length + 1);
+  for (const [index, row] of refusals.items.entries()) {
+    const cells = refusalTable.getByRole("row").nth(index + 1).getByRole("cell");
+    await expect(cells).toHaveCount(3);
+    await expect(cells.nth(0)).toHaveText(row.query);
+    await expect(cells.nth(1)).toHaveText(String(row.count));
+    await expect(cells.nth(2)).toHaveText(row.top_score_max === null ? "—" : String(row.top_score_max));
   }
 
-  // 明细表：标题的"最近 N 条"与合计"N 条"都取响应回显值（limit/total），不是写死的 50。
+  // —— 明细表：标题的"最近 N 条"与合计"N 条"都取响应回显值（limit/total），不是写死的 50 ——
   const logs = await (await page.request.get("/api/admin/logs?limit=50")).json();
   await expect(dash.getByRole("heading", { name: `最近 ${logs.limit} 条` })).toBeVisible();
-  if (logs.items.length > 0) {
-    await expect(dash.getByText(`共 ${logs.total} 条`)).toBeVisible();
-    const first = logs.items[0];
-    const detailRows = dash.getByRole("row").filter({ hasText: first.query });
-    await expect(detailRows).not.toHaveCount(0);
-    await expect(detailRows.first()).toContainText(first.intent);
-  } else {
-    await expect(dash.getByText("本库暂无问答日志。")).toBeVisible();
+  expect(logs.items.length, "种子轮之后明细表必须有行（本用例自带数据）").toBeGreaterThan(0);
+  await expect(dash.getByText(`共 ${logs.total} 条`)).toBeVisible();
+  const detailTable = dash.getByRole("table", { name: `共 ${logs.total} 条` });
+  await expect(detailTable.getByRole("row")).toHaveCount(logs.items.length + 1);
+  for (const [index, item] of logs.items.entries()) {
+    const cells = detailTable.getByRole("row").nth(index + 1).getByRole("cell");
+    await expect(cells).toHaveCount(6);
+    // 逐条对到单元格：意图 / 是否拒答 / 最高分 / 命中数 / 提问原文（时间列只验"渲染了"，
+    // 它走 toLocaleString("zh-CN")，逐字对会把本地化口径写进 e2e 契约）。
+    await expect(cells.nth(1)).toHaveText(item.intent);
+    await expect(cells.nth(2)).toHaveText(item.refused ? "是" : "否");
+    await expect(cells.nth(3)).toHaveText(item.top_score === null ? "—" : String(item.top_score));
+    await expect(cells.nth(4)).toHaveText(String(item.hit_count));
+    await expect(cells.nth(5)).toHaveText(item.query);
+    await expect(cells.nth(0)).not.toHaveText("");
   }
+  // 种子的明细行本身必须在屏上（这一句把"自带数据"闭合到具体那一行，而不是任意一行）。
+  await expect(detailTable.getByRole("row").filter({ hasText: seededQuery })).not.toHaveCount(0);
 });
 
 test("重建 preview 到确认：hash 未变时明确报告无需重建", async ({ page }) => {
   await login(page);
   await page.goto("/admin");
-  // 1818 = e2e 库重建基线的切片数（scripts/e2e_bootstrap.py 全量重建后实测值）。
-  await expect(page.getByTestId("version-table")).toContainText("1818");
+  // —— 整枝评审 F-3：锚点从语料快照换成"响应↔页面"的等强对账 ——
+  // 改前这一句是 `toContainText("1818")`（`e2e_bootstrap.py` 全量重建后的切片数），
+  // 它与同一分支规格 §11:162 的"不断言具体行数"直接冲突：语料一进位它就红，而最便宜的修法
+  // 是"把数字改一改"——那是维护陷阱，不是回归锁。
+  // 现在锚的是**真不变量**：版本表上当前 ready 行渲染的切片数，必须等于
+  // `GET /api/admin/index-versions` 响应里 `current.chunk_count`（同一屏的两个独立来源对账）。
+  // 强度不降：仍然断言那个数字**真的上屏**（`切片 ${chunkCount}` 是版本表"计数"行的渲染文本，
+  // 不是 innerText 里的任意子串），只是不再给具体语料写快照；`chunkCount > 0` 的先置判据
+  // 保证这条断言不可能空跑（`current` 为 null 时直接失败，不会退化成"断言了个 undefined"）。
+  const versions = await (await page.request.get("/api/admin/index-versions")).json();
+  const chunkCount = versions.current?.chunk_count;
+  expect(chunkCount, "index-versions 必须回一个 ready 版本及其 chunk_count（否则锚点空跑）")
+    .toBeGreaterThan(0);
+  await expect(page.getByTestId("version-table")).toContainText(`切片 ${chunkCount}`);
   const panel = page.getByTestId("reindex-panel");
 
   await page.getByRole("button", { name: "预览重建影响" }).click();
@@ -196,9 +289,10 @@ test("重建 preview 到确认：hash 未变时明确报告无需重建", async 
   await expect(forceBox).not.toBeChecked();
 
   await page.getByRole("button", { name: "确认重建" }).click();
+  // reused 那条终态播报仍在（F-3 明确要求它不随锚点改写一起丢）。
   await expect(panel.getByRole("status")).toContainText("无需重建");
-  // 指针 §3.1：默认路径（不勾选）走后端 reused，播报必须是"无需重建"，
-  // **不得**被断言/渲染成"重建完成"——那是谎称数据换过了。
+  // 指针 §3.1：默认路径（不勾选）走后端 reused，播报必须是"无需重建"，**不得**被断言/渲染成
+  // "重建完成"——那是谎称数据换过了。
   await expect(panel).not.toContainText("重建完成");
 });
 
@@ -321,7 +415,17 @@ test("归并即时生效：审核后的别名能在四大库检索里精确命�
   const suggest = page.getByTestId("suggest");
   await expect(suggest).toBeVisible();
   await expect(suggest.getByText("精确")).toBeVisible();
-  await suggest.getByRole("link", { name: target.canonical_name }).click();
+  // —— 整枝评审 F-6 第 2 条：把这一击 scope 到"精确"那一组 ——
+  // 改前是 `suggest.getByRole("link", { name: 目标方名 }).click()`，而分组的钩子是
+  // `suggest-group`（`SearchSuggest.tsx:79`，每组一个 div、组名是组内那个 <p>）——
+  // 于是浏览器这一支**并没有**证明命中的是精确组：目标方若同时出现在字面/语义组里，
+  // 它可能点到别的组，而"精确通道免重建生效"（本用例的交付）就退化成"联想面板里有个同名链接"；
+  // 标题重名时会撞 strict mode 报错，但"点中了错的那一组"是静默的。
+  // `filter({ has })` 的内层定位必须以 page 为根（本文件 `pickPendingCandidate` 的实测注记同一条）。
+  const exactGroup = page.getByTestId("suggest-group")
+    .filter({ has: page.getByText("精确", { exact: true }) });
+  await expect(exactGroup, "联想面板必须有一个标签为「精确」的分组").toHaveCount(1);
+  await exactGroup.getByRole("link", { name: target.canonical_name }).click();
   await expect(page.getByTestId("formula-detail")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/formulas/${target.id}\\b`));
 });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -826,6 +826,82 @@ describe("LogsDashboard", () => {
     release();
     await within(dash).findByText("累计提问");
     expect(within(dash).queryByText("读取问答日志…")).not.toBeInTheDocument();
+  });
+  /* 整枝评审 F-4：`intent` 筛选的陈旧响应守卫（同一形状在 pending 页是 `ed65faa` 修的产品缺陷，
+   * 规格 §13-18 当时如实写着"logs 待统一"，本轮收口）。
+   * 时序做成确定性：两条明细 handler 各持一只 promise，**后发的先落地、先发的后落地**——
+   * 完全由测试手里的 promise 驱动，不用 timer、不用固定延时（本计划已两次否决假定时器）。
+   * 这条必须"没有守卫就翻红"：去掉 LogsDashboard 的 `listGeneration` 比对时，晚到的旧筛选
+   * 结果会整屏覆盖新视图，终态断言即失败（实测输出见 final-fix-wave-report.md 的 F-4 段）。
+   * 同一只用例顺手钉住 F-4 的第 2 条：`summary`/`refusals` 与 `intent` 无关，换筛选**不许**重取。 */
+  it("陈旧响应守卫：先发后到的旧筛选明细不许覆盖新视图，且概览两发不随 intent 重取", async () => {
+    const user = userEvent.setup();
+    const staleRow = { id: 1, created_at: "2026-11-01T00:00:00", session_id: null,
+      query: "旧筛选的行", intent: "", refused: false, top_score: 1, hit_count: 1 };
+    const freshRow = { id: 2, created_at: "2026-11-02T00:00:00", session_id: null,
+      query: "新筛选的行", intent: "F", refused: true, top_score: 0.1, hit_count: 0 };
+    const detailUrls: string[] = [];
+    let overviewGets = 0;
+    let refusalGets = 0;
+    let releaseStale!: () => void;   // 第一条（无 intent）：故意让它后落地
+    let releaseFresh!: () => void;   // 第二条（intent=F）：故意让它先落地
+    const staleGate = new Promise<void>((resolve) => { releaseStale = resolve; });
+    const freshGate = new Promise<void>((resolve) => { releaseFresh = resolve; });
+    /** 旧响应是否真的交还给了客户端——证明这条用例把竞态跑到了，而不是空跑。 */
+    let staleDelivered = false;
+    server.use(
+      http.get("/api/admin/logs/summary", () => {
+        overviewGets += 1;
+        return HttpResponse.json(
+          { queries_total: 9, queries_recent: 9, refusal_rate: 0, avg_hit_count: 1, window_days: 7 });
+      }),
+      http.get("/api/admin/logs/refusals", () => {
+        refusalGets += 1;
+        return HttpResponse.json({ window_days: 7, limit: 50, items: [] });
+      }),
+      http.get("/api/admin/logs", async ({ request }) => {
+        const intentValue = new URL(request.url).searchParams.get("intent");
+        detailUrls.push(intentValue ?? "(缺省)");
+        if (intentValue === "F") {
+          await freshGate;
+          return HttpResponse.json({ total: 1, limit: 50, offset: 0, items: [freshRow] });
+        }
+        await staleGate;
+        staleDelivered = true;
+        return HttpResponse.json({ total: 1, limit: 50, offset: 0, items: [staleRow] });
+      }),
+    );
+
+    render(<LogsDashboard />);
+    // 第一发（缺省筛选）在途时不落数据：这就是稍后"晚到"的那一条。
+    await waitFor(() => expect(detailUrls).toEqual(["(缺省)"]));
+    await user.selectOptions(screen.getByRole("combobox", { name: "按意图筛选" }), "F");
+    await waitFor(() => expect(detailUrls).toEqual(["(缺省)", "F"]));
+
+    // 后发的 F 先落地 → 视图必须是 F 那一屏。
+    releaseFresh();
+    expect(await within(screen.getByTestId("logs-dashboard")).findByText("新筛选的行")).toBeInTheDocument();
+    expect(screen.queryByText("旧筛选的行")).not.toBeInTheDocument();
+
+    // 先发的缺省筛选现在才落地（真实网络里那十几毫秒的迟到窗口）。守卫必须整条丢弃它。
+    releaseStale();
+    await waitFor(() => expect(staleDelivered).toBe(true));
+    for (let round = 0; round < 4; round += 1) {
+      await act(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
+    // 终态四钉：视图仍是最后一次请求的筛选结果、没有闪回旧行、筛选框与视图不矛盾。
+    const dash = screen.getByTestId("logs-dashboard");
+    expect(within(dash).getByText("新筛选的行")).toBeInTheDocument();
+    expect(within(dash).queryByText("旧筛选的行")).not.toBeInTheDocument();
+    expect(within(dash).queryByText("读取日志明细…")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "按意图筛选" })).toHaveValue("F");
+    // F-4 第 2 条：概览两发各只取一次——换筛选重跑它们既白跑又扩大交叠窗口（改前的形状）。
+    expect(overviewGets).toBe(1);
+    expect(refusalGets).toBe(1);
+    expect(detailUrls).toEqual(["(缺省)", "F"]);
   });
 });
 

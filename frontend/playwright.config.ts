@@ -23,17 +23,26 @@ const channel = process.env.PW_BROWSER_CHANNEL;
 // admin_disabled，管理端用例必败——所以这一条是运行前提：
 //   export E2E_ADMIN_TOKEN=…（≥16 字符）
 // （T16 的 runbook 会把它写进文档。）
-// 未满足时本配置**排除 admin project 并打印一行原因**（指针 §1.2 给出的两个分支里
-// 选这个，而不是 globalSetup 抛错）：app project 的 M4 用例不依赖口令，不该被管理端
-// 环境变量的缺失连坐拦下；排除会同时反映在 stderr 的原因行与 `--list` 的用例总数
-// （少整组 admin 用例），不存在"静默跳过并显示成全绿"。
+// 未满足时的处置（**整枝评审 F-7 改了裁定**，规格 §11/§13-17 已同步）：
+//   • `process.env.CI` 存在 → **抛错、非零退出**。原处置是"排除 admin project 并打印原因"，
+//     本地照旧能只跑 app 那 26 条；但未来的 CI 只要忘了 export，就会**用 26/43 报绿**——
+//     "少跑一整个 project 的绿"比"红"危险得多，终审定的就是 CI 必须失败。
+//   • 本地（不设 CI）→ 保持原处置：从 projects 里去掉 admin + 打印一行原因，
+//     跑 M4 的 app 用例不该被管理端环境变量的缺失连坐拦下。
+// 两种情形都**不静默**：原因行照打，`--list` 的用例总数照常反映（本地 26 条/3 文件）。
 const adminToken = process.env.E2E_ADMIN_TOKEN ?? "";
 const adminReady = adminToken.length >= 16;
 if (!adminReady) {
+  const reason = "E2E_ADMIN_TOKEN 未设置或短于 16 字符：管理端在后端是 fail-closed（全 503 admin_disabled），" +
+    "先 export E2E_ADMIN_TOKEN=…（≥16 字符）。";
+  if (process.env.CI) {
+    throw new Error(
+      `[playwright] ${reason}本次是 CI 运行（process.env.CI 已设），不接受"把 admin project 整组排除"后` +
+        `用 26/43 报绿：这里直接非零退出。要跑管理端 e2e 请在 CI 的 secret 里注入该变量。`,
+    );
+  }
   console.error(
-    "[playwright] E2E_ADMIN_TOKEN 未设置或短于 16 字符：管理端在后端是 fail-closed（全 503 admin_disabled），" +
-      "本次运行已排除 admin project（e2e/admin.spec.ts 整组）；app project 不受影响。" +
-      "要跑管理端 e2e：先 export E2E_ADMIN_TOKEN=…（≥16 字符）。",
+    `[playwright] ${reason}本次运行已排除 admin project（e2e/admin.spec.ts 整组）；app project 不受影响。`,
   );
 }
 
