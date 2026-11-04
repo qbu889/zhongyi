@@ -292,11 +292,17 @@ def test_fail_closed_when_token_unset(db_session, monkeypatch):
         assert res.json()["detail"]["code"] == "admin_disabled"
 
 
-def test_expired_cookie_is_401(make_client, db_session, monkeypatch):
-    monkeypatch.setattr(settings, "admin_session_ttl", -1)
+def test_expired_cookie_is_401(make_client, db_session):
+    """直接构造过期 cookie，而不是靠负 TTL 让登录返回一个怪异响应。
+
+    负 `Max-Age` 会被 httpx/浏览器直接丢弃，那样本用例断言的是"没带 cookie"，
+    而不是"带了过期 cookie 也被拒"——过期校验就没被真正测到。
+    """
+    from app.admin import auth
+
     client = make_client()
     _indexed(client, db_session)
-    client.post("/api/admin/session", json={"token": TOKEN})
+    client.cookies.set(auth.COOKIE_NAME, auth.issue_cookie(ttl=-10)[0])
     assert client.get("/api/admin/quality-report").status_code == 401
 ```
 
@@ -2057,7 +2063,7 @@ describe("QualitySection", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     render(<QualitySection id="parse_failure_details" title="③ 解析失败明细"
-      headers={["候选方名", "源文件", "行号", "原因", "判定"]}
+      headers={["候选方名", "源文件#行号", "原因", "判定"]} pathColumn={1}
       rows={[["甲", "03-金匮/方剂库.md", "12", "multi_name_row", "pending"]} />);
     await user.click(screen.getByRole("button", { name: "复制源文件路径" }));
     expect(writeText).toHaveBeenCalledWith("03-金匮/方剂库.md#12");
@@ -2084,14 +2090,14 @@ import { useState } from "react";
 
 import { adminCsvHref } from "@/lib/admin";
 
-const PATH_LISTS = new Set(["parse_failure_details"]);
-
-export function QualitySection({ id, title, headers, rows, exportList }: {
+export function QualitySection({ id, title, headers, rows, exportList, pathColumn }: {
   id: string;
   title: string;
   headers: string[];
   rows: (string | number | null)[][];
   exportList?: string;
+  /** 该列渲染成「路径#行号 + 复制按钮」；不新增列，表头与单元格数必须相等。 */
+  pathColumn?: number;
 }) {
   const [copied, setCopied] = useState("");
 
@@ -2109,26 +2115,29 @@ export function QualitySection({ id, title, headers, rows, exportList }: {
           <caption className="text-left text-xs text-ink/70">{title}：来自 /api/admin/quality-report，不二次计算</caption>
           <thead><tr className="border-b border-line">
             {headers.map((header) => <th key={header} scope="col" className="py-1 pr-2 text-left">{header}</th>)}
-            {PATH_LISTS.has(id) && <th scope="col" className="py-1">源文件</th>}
           </tr></thead>
           <tbody>
             {rows.map((row, index) => (
               <tr key={index} className="border-b border-line/60 align-top">
-                {row.map((cell, cellIndex) => <td key={cellIndex} className="py-1 pr-2">{cell ?? "—"}</td>)}
-                {PATH_LISTS.has(id) && (() => {
-                  const path = `${row[1] ?? ""}${row[2] ? `#${row[2]}` : ""}`;
-                  return (
-                    <td className="py-1">
-                      <span className="break-all">{path}</span>
-                      <button type="button" className="ml-2 text-cinnabar underline"
-                        aria-label="复制源文件路径"
-                        onClick={async () => {
-                          await navigator.clipboard?.writeText(path);
-                          setCopied("已复制源路径");
-                        }}>复制源文件路径</button>
-                    </td>
-                  );
-                })()}
+                {row.map((cell, cellIndex) => {
+                  if (pathColumn !== undefined && cellIndex === pathColumn) {
+                    const path = `${String(cell ?? "")}${row[pathColumn + 1] ? `#${row[pathColumn + 1]}` : ""}`;
+                    return (
+                      <td key={cellIndex} className="py-1 pr-2">
+                        <span className="break-all">{path}</span>
+                        <button type="button" className="ml-2 text-cinnabar underline"
+                          aria-label="复制源文件路径"
+                          onClick={async () => {
+                            await navigator.clipboard?.writeText(path);
+                            setCopied("已复制源路径");
+                          }}>复制源文件路径</button>
+                      </td>
+                    );
+                  }
+                  // 行号已被并进「源文件#行号」那一格，不再单独出格——列数与表头始终相等
+                  if (pathColumn !== undefined && cellIndex === pathColumn + 1) return null;
+                  return <td key={cellIndex} className="py-1 pr-2">{cell ?? "—"}</td>;
+                })}
               </tr>
             ))}
           </tbody>
@@ -2200,8 +2209,10 @@ function QualityReportBody() {
         headers={["原因", "数量"]}
         rows={((report.parse_failures as Record<string, unknown>[] | undefined) ?? [])
           .map((r) => [r.reason as string, r.count as number])} />
+      {/* 源文件与行号合成一列：路径格内是「doc#行号」+ 复制按钮，列数与表头仍然相等 */}
       <QualitySection id="parse_failure_details" title="③ 解析失败明细（可下钻源行）" exportList="parse_failure_details"
-        headers={["候选方名", "源文件", "行号", "原因", "判定"]}
+        headers={["候选方名", "源文件#行号", "原因", "判定"]}
+        pathColumn={1}
         rows={failureDetails.map((r) => [r.raw_name as string, r.doc as string, r.source_row_no as number, r.reason as string, r.decision as string])} />
       <QualitySection id="annotation_items" title="④ 注记被误抽为药味" exportList="annotation_items"
         headers={["药味文本", "variant_id", "formula_item_id"]}
