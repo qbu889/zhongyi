@@ -6,14 +6,17 @@ router 上，而登录端点必须能匿名访问；不拆就得给每条路由�
 指向它们，改名等于同时打断三条链路。
 """
 from dataclasses import asdict
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.admin import auth
 from app.admin.quality import build_quality_report
 from app.admin.reindex import run_reindex
+from app.db.models import PendingFormulaName
 from app.db.session import get_session
 
 public_router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -82,6 +85,57 @@ def logout(response: Response) -> None:
 @router.get("/quality-report")
 def quality_report(session: Session = Depends(get_session)) -> dict:
     return build_quality_report(session).to_dict()
+
+
+class PendingItem(BaseModel):
+    id: int
+    raw_name: str
+    doc: str
+    source_row_no: int | None
+    suggested_parent: str | None
+    confidence: float | None
+    evidence_text: str | None
+    reason: str | None
+    decision: str
+    decided_by: str | None
+    decided_at: datetime | None
+    decided_name: str | None
+
+
+class PendingListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[PendingItem]
+
+
+def _pending_item(row: PendingFormulaName) -> PendingItem:
+    return PendingItem(
+        id=row.id, raw_name=row.raw_name, doc=row.doc,
+        source_row_no=row.source_row_no, suggested_parent=row.suggested_parent,
+        confidence=row.confidence, evidence_text=row.evidence_text,
+        reason=row.reason, decision=row.decision, decided_by=row.decided_by,
+        decided_at=row.decided_at, decided_name=row.decided_name)
+
+
+@router.get("/pending", response_model=PendingListResponse)
+def list_pending(
+    decision: str | None = Query(default=None, max_length=20),
+    reason: str | None = Query(default=None, max_length=40),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> dict:
+    stmt = select(PendingFormulaName)
+    if decision:
+        stmt = stmt.where(PendingFormulaName.decision == decision)
+    if reason:
+        stmt = stmt.where(PendingFormulaName.reason == reason)
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = list(session.scalars(
+        stmt.order_by(PendingFormulaName.id).limit(limit).offset(offset)))
+    return {"total": total, "limit": limit, "offset": offset,
+            "items": [_pending_item(r).model_dump() for r in rows]}
 
 
 # 本任务先按无 body 实现（与一期一致）；`ReindexBody`/锁/结构化 500 在 Task 8 再叠上来。
