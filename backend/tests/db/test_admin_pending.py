@@ -41,14 +41,30 @@ def test_paging_is_stable(admin_client, queued):
     assert page["items"][0]["raw_name"] == "乙"      # 按 id 升序，翻页可预期
 
 
-def _merge_target(db_session):
+def _merge_target(db_session, name: str = "归并目标方"):
+    """造一个语料里不存在的方作为归并目标：名字保证不与 ETL 的 423 个方撞车，
+    所以它名下的 `人工归并` alias 只可能是端点写的，不可能是 loader 写的。"""
     from app.db.models import Formula
 
-    row = Formula(canonical_name="归并目标方", status="confirmed", kind="single",
+    row = Formula(canonical_name=name, status="confirmed", kind="single",
                   anchor="方#probe")
     db_session.add(row)
     db_session.commit()
     return row
+
+
+def _seed_ready_version(db_session):
+    """retriever.search 的全局守卫要求存在 ready 的 index_version，否则 IndexNotReady
+    （retriever.py:214-223）； EmbeddingMismatch 同理要求 model 版本对上 HashingEmbedder。
+    这里只登记一条空的 ready 版本行——不跑 run_reindex，锁的语义不变：
+    归并写表后无需重建即可在精确通道命中（向量通道为空不影响 exact 断言）。
+    """
+    from app.admin.reindex import EMBEDDING_MODEL_VERSION
+    from app.db.models import IndexVersion
+
+    db_session.add(IndexVersion(commit_hash="probe", status="ready",
+                                 embedding_model_version=EMBEDDING_MODEL_VERSION))
+    db_session.commit()
 
 
 def test_merged_writes_audit_trail_and_alias(admin_client, db_session, queued):
@@ -70,17 +86,10 @@ def test_merged_writes_audit_trail_and_alias(admin_client, db_session, queued):
 def test_merged_alias_takes_effect_in_exact_search_without_reindex(
         admin_client, db_session, queued):
     """归并「立即生效」的回归锁：不重建索引，人工别名就能在精确通道命中。"""
-    from app.admin.reindex import EMBEDDING_MODEL_VERSION
-    from app.db.models import IndexVersion
-    from app.search import retriever
     from app.embed.embedder import HashingEmbedder
+    from app.search import retriever
 
-    # retriever.search 的全局守卫要求存在 ready 的 index_version，否则 IndexNotReady。
-    # 这里只登记一条空的 ready 版本行——不跑 run_reindex，锁的语义不变：
-    # 归并写表后无需重建即可在精确通道命中（向量通道为空不影响 exact 断言）。
-    db_session.add(IndexVersion(commit_hash="probe", status="ready",
-                                 embedding_model_version=EMBEDDING_MODEL_VERSION))
-    db_session.commit()
+    _seed_ready_version(db_session)
 
     target = _merge_target(db_session)
     admin_client.post(f"/api/admin/pending/{queued[0].id}/decision",
@@ -129,9 +138,14 @@ def test_noise_and_validation_errors(admin_client, db_session, queued):
 
 
 def test_human_decisions_survive_full_reindex(admin_client, db_session, queued):
-    """`loaders.py:8` 声明 decision/decided_by/decided_at 是「人工资产」，
-    但此前没有任何测试守着它。这里用一次真实 force 重建去证伪：
-    只要 loaders 的 upsert 更新集扩到这些列，本测试立刻红。
+    """fixture 行（doc=a.md/b.md/c.md）在重建后的**结构性**后果：不删行、不重复插、
+    人工归并的 alias 不被删。
+
+    注意它**不是**规格 §6 的人工字段存活锁：ETL 产出的 pending 行 doc 是
+    `方剂库-经典配方.md`（loaders.py:256-259），而 pending 的 ON CONFLICT 目标是
+    `["raw_name","doc","source_row_no"]`（loaders.py:260-263），fixture 行永不与 ETL 行相撞，
+    所以哪怕有人把 DO UPDATE 集合扩到 decision 这几列，本测试仍然绿。
+    真正会失败的锁是下面的 test_human_decision_on_etl_row_survives_full_reindex。
     """
     from app.admin.reindex import run_reindex
     from app.db.models import Formula, FormulaAlias
@@ -156,3 +170,185 @@ def test_human_decisions_survive_full_reindex(admin_client, db_session, queued):
     assert db_session.get(FormulaAlias, merged_alias.id) is not None
     # 队列行本身不能被重建复制出来
     assert db_session.query(PendingFormulaName).filter_by(raw_name="甲").count() == 1
+
+
+def test_human_decision_on_etl_row_survives_full_reindex(admin_client, db_session):
+    """规格 §6 / loaders.py:8「人工资产重跑只刷新置信度」的**唯一真锁**（R-M5-7）。
+
+    与上一条的区别就是要害：判定对象必须是 ETL 自己产出的 pending 行——只有它的
+    `(raw_name, doc, source_row_no)` 会和第二遍 `run_reindex` 的 ON CONFLICT 撞上，
+    于是 `loaders.py:262-263` 的 DO UPDATE 集合一旦扩到
+    `decision/decided_by/decided_at/decided_name`，本测试立刻翻红。
+    不跑两遍真实重建就证伪不了这件事，所以这里付两次 rebuild 的代价。
+    """
+    from sqlalchemy import select
+
+    from app.admin.reindex import run_reindex
+    from app.db.models import FormulaAlias
+
+    # 第一遍：让 ETL 把 64 行队列写进库，再从里面取一条真行。
+    run_reindex(db_session)
+    db_session.commit()
+    db_session.expire_all()
+
+    etl_row = db_session.scalar(
+        select(PendingFormulaName)
+        .where(PendingFormulaName.reason == "no_formula_name")
+        .order_by(PendingFormulaName.id))
+    assert etl_row is not None, "语料里必须有 no_formula_name 的 ETL 队列行"
+    pending_id, raw_name, doc = etl_row.id, etl_row.raw_name, etl_row.doc
+    assert doc == "方剂库-经典配方.md", "取到的是 ETL 行而不是 fixture 行"
+
+    # 走真实 HTTP 面提交归并（不是直接写 ORM），目标方用库里新建的方。
+    target = _merge_target(db_session)
+    res = admin_client.post(f"/api/admin/pending/{pending_id}/decision",
+                            json={"action": "merged", "target_formula_id": target.id})
+    assert res.status_code == 200, res.text
+    assert res.json()["alias_created"] is True
+
+    # 第二遍：force 重建，pending 的 upsert 必然撞上这一行。
+    run_reindex(db_session, force=True)
+    db_session.commit()
+    db_session.expire_all()
+
+    row = db_session.get(PendingFormulaName, pending_id)
+    assert (row.decision, row.decided_by) == ("merged", "admin")
+    assert row.decided_at is not None
+    human_alias = db_session.scalar(
+        select(FormulaAlias).where(FormulaAlias.formula_id == target.id,
+                                   FormulaAlias.name == raw_name,
+                                   FormulaAlias.doc == doc,
+                                   FormulaAlias.kind == "人工归并"))
+    assert human_alias is not None, "人工归并的 alias 不能被后续重建抹掉"
+
+
+def test_remerge_moves_human_alias_to_the_new_target(admin_client, db_session, queued):
+    """R-M5-6：同一候选名先归并到 A、再归并到 B 是「移动」，不是「追加」。
+
+    唯一约束含 formula_id（models.py:62），所以只按 (formula_id,name,doc) upsert 会
+    留下 A、B 两条 alias，而 retriever.py:59-68 把两者都当 exact 命中返回——
+    用户的纠正动作反而制造歧义，M5-A 又没有撤销端点。
+    """
+    from sqlalchemy import select
+
+    from app.db.models import FormulaAlias
+    from app.embed.embedder import HashingEmbedder
+    from app.search import retriever
+
+    _seed_ready_version(db_session)
+    first_target = _merge_target(db_session, "归并目标方A")
+    second_target = _merge_target(db_session, "归并目标方B")
+
+    url = f"/api/admin/pending/{queued[0].id}/decision"
+    assert admin_client.post(url, json={"action": "merged",
+                                        "target_formula_id": first_target.id}
+                             ).json()["alias_created"] is True
+    again = admin_client.post(url, json={"action": "merged",
+                                         "target_formula_id": second_target.id})
+    assert again.json()["alias_created"] is True, "换目标是真的写了一行新 alias"
+
+    rows = db_session.scalars(select(FormulaAlias).where(
+        FormulaAlias.name == "甲", FormulaAlias.doc == "a.md",
+        FormulaAlias.kind == "人工归并")).all()
+    assert [r.formula_id for r in rows] == [second_target.id]
+
+    hits = retriever.search(db_session, "甲", kinds={"formula"}, top=5,
+                            embedder=HashingEmbedder()).hits
+    assert [h.ref_id for h in hits if h.match == "exact"] == [second_target.id], \
+        "精确通道不能再命中旧目标方"
+
+
+def test_remerge_leaves_loader_written_aliases_alone(admin_client, db_session, queued):
+    """改判的删除必须按 `kind == 人工归并` 限定：loader 写的别名一行都不许碰。
+
+    别名行挂在第三个方名下——(formula_id, name, doc) 是唯一键（models.py:62），
+    若把它挂在 A 或 B 上，人工归并那行会撞 DO NOTHING，测的就不是 kind 限定而是撞键了。
+    """
+    from app.db.models import FormulaAlias
+
+    first_target = _merge_target(db_session, "归并目标方A")
+    second_target = _merge_target(db_session, "归并目标方B")
+    decoy_owner = _merge_target(db_session, "别名归属方")
+    loader_alias = FormulaAlias(formula_id=decoy_owner.id, name="甲", doc="a.md", kind="古名")
+    db_session.add(loader_alias)
+    db_session.commit()
+
+    url = f"/api/admin/pending/{queued[0].id}/decision"
+    admin_client.post(url, json={"action": "merged", "target_formula_id": first_target.id})
+    admin_client.post(url, json={"action": "merged", "target_formula_id": second_target.id})
+
+    assert db_session.get(FormulaAlias, loader_alias.id) is not None, \
+        "kind=古名 的 loader 别名被改判误删了"
+    assert db_session.query(FormulaAlias).filter_by(
+        name="甲", doc="a.md", kind="人工归并").count() == 1
+
+
+def test_relabel_after_confirmed_new_clears_decided_name(admin_client, db_session, queued):
+    """R-M5-9：`confirmed_new` 之后改判为 merged/noise，`decided_name` 必须清空。
+
+    它的契约是「确认独立方时填的规范名」，留着旧值会让响应自相矛盾，
+    T13 会并列渲染成 `merged：手定方名`。
+    """
+    target = _merge_target(db_session)
+
+    admin_client.post(f"/api/admin/pending/{queued[0].id}/decision",
+                      json={"action": "confirmed_new", "name": "手定方名"})
+    to_merged = admin_client.post(f"/api/admin/pending/{queued[0].id}/decision",
+                                  json={"action": "merged", "target_formula_id": target.id})
+    assert to_merged.json()["item"]["decision"] == "merged"
+    assert to_merged.json()["item"]["decided_name"] is None
+    db_session.expire_all()
+    assert db_session.get(PendingFormulaName, queued[0].id).decided_name is None
+
+    admin_client.post(f"/api/admin/pending/{queued[1].id}/decision",
+                      json={"action": "confirmed_new", "name": "手定方名"})
+    to_noise = admin_client.post(f"/api/admin/pending/{queued[1].id}/decision",
+                                 json={"action": "noise"})
+    assert to_noise.json()["item"]["decision"] == "noise"
+    assert to_noise.json()["item"]["decided_name"] is None
+
+
+def test_decision_422_detail_is_a_code_message_object(admin_client, queued):
+    """R-M5-8：三动作的 422 一律是 `{"detail": {"code","message"}}`。
+
+    原先 `action: Literal[...]`、`Field(max_length=…)` 的失败走 RequestValidationError，
+    detail 是 `[{loc, msg, type}]` 数组，而 `frontend/lib/api.ts:22-24` 只读
+    `detail.code` / `detail.message`——校验搬进端点后这些分支才有机会被走到。
+    """
+    cases = [
+        {"action": "maybe"},                                  # 动作不在三值之内
+        {},                                                   # 连缺 action 也归到同一码
+        {"action": "merged"},                                 # 动作与参数不匹配
+        {"action": "merged", "target_formula_id": None},
+        {"action": "confirmed_new"},                          # 缺规范名
+        {"action": "confirmed_new", "name": "   "},           # 只有空白
+        {"action": "confirmed_new", "name": "名" * 201},      # 超上限 200
+        {"action": "noise", "note": "注" * 501},              # 超上限 500
+    ]
+    for payload in cases:
+        res = admin_client.post(f"/api/admin/pending/{queued[0].id}/decision", json=payload)
+        assert res.status_code == 422, (payload, res.text)
+        detail = res.json()["detail"]
+        assert isinstance(detail, dict), (payload, detail)
+        assert set(detail) == {"code", "message"}, payload
+        assert detail["code"] == "invalid_decision_payload", payload
+        assert detail["message"], payload
+    assert admin_client.get(f"/api/admin/pending?decision=pending").json()["total"] == len(queued)
+
+    long_name = admin_client.post(f"/api/admin/pending/{queued[0].id}/decision",
+                                  json={"action": "confirmed_new", "name": "名" * 201})
+    assert "name" in long_name.json()["detail"]["message"], "超长信息要点名是哪个字段"
+    long_note = admin_client.post(f"/api/admin/pending/{queued[0].id}/decision",
+                                  json={"action": "noise", "note": "注" * 501})
+    assert "note" in long_note.json()["detail"]["message"]
+
+
+def test_pending_limit_out_of_range_is_clamped_not_rejected(admin_client, queued):
+    """R-M5-8 §3：`limit` 越界钳制到 [1, 200]，不再返回 FastAPI 形状的 422。"""
+    for raw, expected in [("0", 1), ("-5", 1), ("5000", 200), ("200", 200)]:
+        res = admin_client.get(f"/api/admin/pending?limit={raw}")
+        assert res.status_code == 200, (raw, res.text)
+        body = res.json()
+        assert body["limit"] == expected, raw          # 响应里的 limit 是实际生效值
+        assert len(body["items"]) <= expected, raw
+        assert body["total"] == len(queued), raw
