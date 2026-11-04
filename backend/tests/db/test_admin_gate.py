@@ -54,6 +54,8 @@ def test_login_logout_round_trip(make_client, db_session):
     set_cookie = res.headers["set-cookie"]
     assert "zhongyi_admin=" in set_cookie
     assert "HttpOnly" in set_cookie and "SameSite=lax" in set_cookie
+    # 规格 §11.2 点名 Max-Age；Path=/ 是 cookie 对 /api/* 全站可见的前提
+    assert "Max-Age=" in set_cookie and "Path=/" in set_cookie
     assert client.get("/api/admin/quality-report").status_code == 200
 
     assert client.post("/api/admin/session/logout").status_code == 204

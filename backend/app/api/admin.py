@@ -19,16 +19,24 @@ from app.db.session import get_session
 public_router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+def _admin_disabled() -> HTTPException:
+    """503「未启用」在登录门与登录端点两处出现：字面值收成一处，后续任务继续加端点时
+    不必再抄一遍（错误码是规格 §12 的字面 `admin_disabled`，前端按 code 显示）。"""
+    return HTTPException(503, detail={"code": "admin_disabled",
+                                      "message": "管理端未启用：请设置 ADMIN_TOKEN（至少 16 字符）"})
+
+
 def require_admin(request: Request) -> None:
     """登录门：未启用 503（fail-closed），未登录 401。判定只走 auth 内核，不在此重实现。
 
-    放在 api 层而不是 auth 内核，是因为内核不该依赖 web 框架（`Request` 注解必须在
-    模块级可解析——FastAPI 用函数所在模块的 globals 求值字符串注解，局部导入会 NameError）；
+    放在 api 层而不是 auth 内核，是因为内核不该依赖 web 框架。`Request` 注解必须在
+    模块级可解析：FastAPI 用函数所在模块的 globals 求值字符串注解，若只在局部导入，
+    pydantic 会把 NameError 吞掉、留下未解析的 ForwardRef，FastAPI 随即把该参数
+    当成**必填 query 参数**绑定——请求 422 直接失败，门根本不会执行；
     「未启用」判定本身仍是内核的 `admin_enabled()` 一处。
     """
     if not auth.admin_enabled():
-        raise HTTPException(503, detail={"code": "admin_disabled",
-                                         "message": "管理端未启用：请设置 ADMIN_TOKEN（至少 16 字符）"})
+        raise _admin_disabled()
     if not auth.verify_cookie(request.cookies.get(auth.COOKIE_NAME)):
         raise HTTPException(401, detail={"code": "admin_unauthorized", "message": "请先登录管理端"})
 
@@ -56,8 +64,7 @@ def session_state(request: Request) -> dict:
 @public_router.post("/session")
 def login(body: LoginBody, response: Response) -> dict:
     if not auth.admin_enabled():
-        raise HTTPException(503, detail={"code": "admin_disabled",
-                                         "message": "管理端未启用：请设置 ADMIN_TOKEN（至少 16 字符）"})
+        raise _admin_disabled()
     if not auth.login_ok(body.token):
         raise HTTPException(401, detail={"code": "admin_unauthorized", "message": "口令不正确"})
     value, expires_at = auth.issue_cookie()
