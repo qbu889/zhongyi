@@ -4,7 +4,8 @@ import io
 
 import pytest
 
-from app.admin.reindex import run_reindex
+from app.admin.reindex import CHUNKING_VERSION, EXTRACT_RULE_VERSION, run_reindex
+from app.db.models import IndexVersion
 
 
 @pytest.fixture
@@ -165,3 +166,60 @@ def test_unknown_intent_is_empty_not_error(admin_client, logged):
     res = admin_client.get("/api/admin/logs?intent=ZZ")
     assert res.status_code == 200
     assert res.json()["total"] == 0 and res.json()["items"] == []
+
+
+# —— Task 7：索引版本列表与只读重建 preview ——
+def test_index_versions_lists_current(admin_client, indexed):
+    body = admin_client.get("/api/admin/index-versions").json()
+    assert body["current"]["status"] == "ready"
+    assert body["current"]["chunk_count"] == 1818
+    assert len(body["versions"]) >= 1
+
+
+def test_index_versions_rows_carry_the_quadruple(admin_client, indexed):
+    """规格 §4：每行含四元组（语料 hash / embedding / chunking / extract rule）与
+    `notes.skipped`。T11 的版本历史表直接按这些键渲染，缺一个就是空白列。"""
+    row = admin_client.get("/api/admin/index-versions").json()["current"]
+    assert {"commit_hash", "embedding_model_version", "chunking_version",
+            "extract_rule_version"} <= set(row)
+    assert row["chunking_version"] == CHUNKING_VERSION
+    assert row["extract_rule_version"] == EXTRACT_RULE_VERSION
+    assert "skipped" in row["notes"]
+
+
+def test_preview_is_read_only_and_reports_change_flag(admin_client, indexed, db_session):
+    before = db_session.query(IndexVersion).count()
+    res = admin_client.get("/api/admin/reindex/preview")
+    assert res.status_code == 200
+    preview = res.json()
+    assert db_session.query(IndexVersion).count() == before          # 关键：preview 绝不写库
+    assert preview["changed"] is False and preview["will_reuse"] is True
+    # brief 写的是 `["herb"]`，但 build_corpus() 的真实键名是 `herbs`（键名即 build_corpus
+    # 的键，一个都不改名）；379 这个数不变，与 test_admin_api 的 counts["herb"] 同源。
+    assert preview["corpus_counts"]["herbs"] == 379
+
+
+def test_preview_maps_git_failure_to_503(admin_client, monkeypatch):
+    from app.api import admin as admin_api
+
+    def boom(repo_dir=None):
+        raise ValueError("distilled/ 无提交历史")
+
+    monkeypatch.setattr(admin_api, "distilled_commit_hash", boom)
+    res = admin_client.get("/api/admin/reindex/preview")
+    assert res.status_code == 503
+    detail = res.json()["detail"]
+    assert detail["code"] == "corrupt_corpus_git_state"
+    # R-M5-12：错误体必须是规格 §12 的两键形状，不许是 FastAPI 默认数组
+    assert set(detail) == {"code", "message"}
+
+
+def test_read_paths_without_any_ready_index(admin_client):
+    """brief 的三条用例只走「已有 ready 版本」分支；`current=None` 那条分支
+    （首次部署/全部回滚后）不测就是没测——它同时是 `changed=True` 的唯一真实来源。"""
+    versions = admin_client.get("/api/admin/index-versions").json()
+    assert versions["current"] is None
+    preview = admin_client.get("/api/admin/reindex/preview").json()
+    assert preview["changed"] is True and preview["will_reuse"] is False
+    assert preview["current"] is None
+    assert preview["target_commit_hash"] == versions["target_commit_hash"]

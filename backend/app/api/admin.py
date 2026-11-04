@@ -18,9 +18,10 @@ from sqlalchemy.orm import Session
 
 from app.admin import auth
 from app.admin.quality import build_quality_report
-from app.admin.reindex import run_reindex
-from app.db.models import Formula, FormulaAlias, PendingFormulaName, QaLog
+from app.admin.reindex import build_corpus, run_reindex
+from app.db.models import Formula, FormulaAlias, IndexVersion, PendingFormulaName, QaLog
 from app.db.session import get_session
+from app.git_utils import distilled_commit_hash
 
 public_router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -471,3 +472,83 @@ def list_logs(
          "session_id": r.session_id, "query": r.query, "intent": r.intent,
          "refused": r.refused, "top_score": r.top_score, "hit_count": r.hit_count}
         for r in rows]}
+
+
+# —— Task 7：索引版本列表与只读重建 preview（规格 §4 / §7）。两条都是纯读路径：
+# 只有 GET /reindex/preview 会跑 build_corpus()（约 1 秒），POST /reindex 不重复跑它——
+# 重建自己就会解析一遍，preview 的职责只是让人在按二次确认之前看到规模量级。
+def _target_hash() -> str:
+    """目标语料 hash。规格 §12：`distilled_commit_hash()` 拿不到 hash → 503 `corrupt_corpus_git_state`。"""
+    try:
+        return distilled_commit_hash()
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "corrupt_corpus_git_state",
+                                         "message": f"读不到 distilled 的 git 状态：{exc}"})
+
+
+# `build_corpus()` 的键名原样就是 `corpus_counts` 的键名——不映射成 loaders 的源名
+# （`herbs` 不是 `herb`），前端 T11 的 ReindexPreview 按这些键取值。其中两个键不是行列表
+# 而是聚合对象：`vocab`（HerbVocab）与 `pairs`（PairingResult），对它们 len() 直接 TypeError，
+# brief 的字典推导在这里会把 preview 打成 500。所以显式取它们的主集合行数，其余一律 len()。
+_CORPUS_PRIMARY_ROWS = {"vocab": "names", "pairs": "pairs"}
+
+
+def _corpus_counts(corpus: dict) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for name, value in corpus.items():
+        primary = _CORPUS_PRIMARY_ROWS.get(name)
+        if primary is not None:
+            value = getattr(value, primary)
+        counts[name] = len(value)
+    return counts
+
+
+def _version_item(row: IndexVersion | None) -> dict | None:
+    if row is None:
+        return None
+    return {"id": row.id, "status": row.status, "commit_hash": row.commit_hash,
+            "formula_count": row.formula_count, "herb_count": row.herb_count,
+            "acupoint_count": row.acupoint_count, "case_count": row.case_count,
+            "chunk_count": row.chunk_count, "embedding_model_version": row.embedding_model_version,
+            "chunking_version": row.chunking_version, "extract_rule_version": row.extract_rule_version,
+            "notes": row.notes or {}, "created_at": row.created_at.isoformat() if row.created_at else None}
+
+
+@router.get("/index-versions")
+def index_versions(session: Session = Depends(get_session)) -> dict:
+    """最近 50 个索引版本，新在前。`current` = 其中第一个 ready 行（没有则 None）。
+
+    每行带规格 §4 的四元组（语料 hash / embedding / chunking / extract rule）与
+    `notes.skipped`，版本历史表按这些键渲染。
+    """
+    rows = list(session.scalars(select(IndexVersion).order_by(IndexVersion.id.desc()).limit(50)))
+    current = next((r for r in rows if r.status == "ready"), None)
+    return {"current": _version_item(current), "target_commit_hash": _target_hash(),
+            "versions": [_version_item(r) for r in rows]}
+
+
+@router.get("/reindex/preview")
+def reindex_preview(session: Session = Depends(get_session)) -> dict:
+    """只解析语料、绝不写库：让维护者在二次确认前看到规模量级。
+
+    不给逐实体「+N/-N」差值：那需要 dry-run 整套 loaders。一期给的是
+    「变没变」+「目标侧各源行数」+「当前版本各计数」三样，让人自己对照，
+    而不是让后端编一个看起来精确的差值。（规格 §7 原文的 `delta` 按这条口径
+    落地为 `changed` + 两侧行数对照，plan 已把该改写登记给 T16 回写 §4/§7。）
+
+    与 §7「无 building 中间态」一致：这里不预测任何进行中的状态，只回答
+    「按当前语料再跑一次会不会产生新版本」——`will_reuse` 就是 POST /reindex
+    在非 force 下的短路条件（四元组全同），两者口径同一个 hash。
+    """
+    commit_hash = _target_hash()
+    corpus = build_corpus()
+    current = session.scalar(select(IndexVersion).where(IndexVersion.status == "ready")
+                             .order_by(IndexVersion.id.desc()))
+    changed = current is None or current.commit_hash != commit_hash
+    return {
+        "changed": changed,
+        "will_reuse": not changed,
+        "target_commit_hash": commit_hash,
+        "corpus_counts": _corpus_counts(corpus),
+        "current": _version_item(current),
+    }
