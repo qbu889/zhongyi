@@ -3,7 +3,10 @@ import type { IndexVersions } from "@/lib/admin";
 /** notes 是后端自由形状（Record<string, unknown>，实测存
  * {skipped:{...}, noise_tokens:n, dangling_herb_items:n, pair_count:n}），渲染成
  * `k: v` 摘要；嵌套 dict 递归展开——计划稿的扁平写法会把
- * {skipped:{pair_missing_variant:4}} 打成 "skipped: [object Object]"，吞掉 skipped 计数。 */
+ * {skipped:{pair_missing_variant:4}} 打成 "skipped: [object Object]"，吞掉 skipped 计数。
+ * 标签用「构建摘要」（评审 F-E，新增产品文案，T16 回写规格）：`notes` 里除了 skipped
+ * 还有 noise_tokens/dangling_herb_items/pair_count（reindex.py:184-185），
+ * 用 `<dt>skipped</dt>` 描述不了它包住的值。 */
 function value(v: unknown): string {
   if (v === null || v === undefined) return "—";
   if (Array.isArray(v)) return v.map(value).join("/");
@@ -32,7 +35,7 @@ export function VersionTable({ data }: { data: IndexVersions }) {
           <dt className="text-ink/70">计数</dt>
           <dd>方 {value(current.formula_count)} · 药 {value(current.herb_count)} · 穴 {value(current.acupoint_count)}
             · 案 {value(current.case_count)} · 切片 {value(current.chunk_count)}</dd>
-          <dt className="text-ink/70">skipped</dt><dd>{value(current.notes)}</dd>
+          <dt className="text-ink/70">构建摘要</dt><dd>{value(current.notes)}</dd>
           <dt className="text-ink/70">生成时间</dt><dd>{value(current.created_at)}</dd>
         </dl>
       )}

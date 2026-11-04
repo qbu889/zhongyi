@@ -101,12 +101,20 @@ export interface IndexVersionInfo {
 export interface IndexVersions {
   current: IndexVersionInfo | null; target_commit_hash: string; versions: IndexVersionInfo[];
 }
+/** build_corpus() 返回字典的原样键（backend/app/admin/reindex.py:97-110，共 11 个）。
+ * 收进类型层而不是 `Record<string, number>`：组件里 `corpus_counts` 的每一次读取都是点号
+ * 访问，错键（`herb` 少个 s）在 Record 下合法、只会静默渲染成占位符"—"；具名可选键让写错
+ * 键变成编译错误。全部可选——后端新增语料源时不该炸前端，但**不许**退回开放索引签名。
+ * 草药键是复数 `herbs`。 */
+export interface ReindexCorpusCounts {
+  herbs?: number; vocab?: number; ancient?: number; classic?: number; evidence?: number;
+  framework?: number; cases?: number; acupoints?: number; acupoint_symptoms?: number;
+  pairs?: number; aliases?: number;
+}
 export interface ReindexPreview {
   changed: boolean; will_reuse: boolean; target_commit_hash: string;
-  /** 键名是 build_corpus() 的原样键：herbs/vocab/ancient/classic/evidence/framework/
-   * cases/acupoints/acupoint_symptoms/pairs/aliases（草药键是复数 `herbs`，不是 `herb`）。
-   * changed/will_reuse 与 POST /reindex 非 force 的四元组复用谓词同一口径。 */
-  corpus_counts: Record<string, number>;
+  /** changed/will_reuse 与 POST /reindex 非 force 的四元组复用谓词同一口径。 */
+  corpus_counts: ReindexCorpusCounts;
   current: IndexVersionInfo | null;
 }
 

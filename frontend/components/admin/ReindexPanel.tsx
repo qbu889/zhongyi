@@ -15,12 +15,19 @@ type Phase = "idle" | "previewing" | "confirm" | "running" | "done" | "reused" |
 
 const TERMINAL: ReadonlySet<Phase> = new Set<Phase>(["done", "reused", "failed"]);
 
+/** 写前窗口：预览已发出、确认按钮在位、重建同步执行中。终态不在此集合内，
+ * 所以 `loadPreview` 留下的 preview 不会在"重建完成/无需重建"旁边继续渲染（F-D）。 */
+const PRE_WRITE: ReadonlySet<Phase> = new Set<Phase>(["previewing", "confirm", "running"]);
+
 export function ReindexPanel({ onDone }: { onDone: () => void }) {
   const reprobe = useAdminReauth();
   const [phase, setPhase] = useState<Phase>("idle");
   const [preview, setPreview] = useState<ReindexPreview | null>(null);
   const [report, setReport] = useState<ReindexReport | null>(null);
   const [message, setMessage] = useState("");
+  /** 强制重建的 UI 归属（R-M5-17）：默认不勾选，唯一一条发请求的路径从本状态取 force。
+   * 不给它开第二个按钮——两个入口必然漂移。 */
+  const [force, setForce] = useState(false);
 
   async function loadPreview() {
     setPhase("previewing"); setMessage(""); setReport(null);
@@ -40,10 +47,11 @@ export function ReindexPanel({ onDone }: { onDone: () => void }) {
   async function run() {
     setPhase("running"); setMessage("");
     try {
-      // force 恒为 false（规格 §8-13/验收 13）：POST 与 preview 共用四元组复用谓词，
-      // 未变化时后端回 reused=true——reused 终态由此可达。计划片段写死 force:true 会让
-      // reused 分支永不可达（force 跳过短路必全量重建），与指针 §2 直接矛盾，按指针修正。
-      const result = await adminPost<ReindexReport>("/api/admin/reindex", { force: false });
+      // force 来自勾选态（R-M5-17）：默认 false 才让后端的复用语义可达——
+      // `reindex.py:157` 把复用短路 gate 在 `not force` 上，写死 true 会让 reused 终态
+      // 永不可达（`admin.py:346` 原样透传 `body.force`）。勾选即维护者点名"我不管，重来一遍"，
+      // 后端此时必全量重建并新起一个版本行。
+      const result = await adminPost<ReindexReport>("/api/admin/reindex", { force });
       setReport(result);
       if (result.reused) {
         // 复用路径后端给 counts={}、chunks=0；谎称「重建完成 / 0 个 chunk」会让维护者
@@ -73,18 +81,34 @@ export function ReindexPanel({ onDone }: { onDone: () => void }) {
           预览重建影响
         </button>
       )}
-      {preview && phase !== "idle" && (
+      {/* 写前卡片只在写前窗口（previewing/confirm/running）出现（评审 F-D）：
+          终态里残留"无变化 · 目标 commit …"会挂在"重建完成/无需重建"旁边自相矛盾。
+          条件收窄而不是清 preview 状态，也不为收尾再拉一次 preview——那是多发一个请求
+          去掩盖状态残留。 */}
+      {preview && PRE_WRITE.has(phase) && (
         <div role="group" aria-label="重建确认" className="mt-2 text-sm">
           <p>{preview.changed ? "语料或规则有变化" : "无变化"} · 目标 commit {preview.target_commit_hash.slice(0, 8)}</p>
           {/* 键名是 build_corpus() 的原样键（复数 herbs，backend/app/admin/reindex.py:97-110）；
-              写成 `herb` 会静默命中 ?? "—"，把「药 379」丢成「药 —」。 */}
+              写成 `herb` 会静默命中 ?? "—"，把「药 379」丢成「药 —」。类型层已收成 11 个具名
+              可选键（F-G），错键现在是编译错误。 */}
           <p className="mt-1 text-ink/70">源侧行数：药 {preview.corpus_counts.herbs ?? "—"}
             · 古方 {preview.corpus_counts.ancient ?? "—"} · 克数本 {preview.corpus_counts.classic ?? "—"}
             · 穴 {preview.corpus_counts.acupoints ?? "—"}</p>
           <p className="mt-1 text-xs text-ink/70">一期不提供逐实体 +N/−N 差值（需 dry-run 整套 loaders）。</p>
+          {/* R-M5-17：force 的唯一 UI 归属。原生 checkbox + htmlFor 关联 label（M4 可达性写法），
+              label 即该控件的可访问名，不靠外层 group 的名字；running 期间禁用，
+              原因沿用下面那一行「重建进行中…」，不新增第二处解释。 */}
+          <div className="mt-2">
+            <input id="reindex-force" type="checkbox" checked={force}
+              disabled={phase === "running"}
+              onChange={(event) => setForce(event.target.checked)}
+              className="mr-1 align-middle" />
+            <label htmlFor="reindex-force">强制重建（即使语料与规则未变化）</label>
+            <p className="mt-1 text-xs text-ink/70">强制重建会新起一个索引版本；同步执行期间页面不可用。</p>
+          </div>
         </div>
       )}
-      {(phase === "previewing" || phase === "confirm" || phase === "running") && (
+      {PRE_WRITE.has(phase) && (
         <button type="button" onClick={run} disabled={phase !== "confirm"}
           className="mt-2 rounded bg-cinnabar px-3 py-1 text-sm text-paper disabled:opacity-50">
           {phase === "running" ? "重建中…" : "确认重建"}
