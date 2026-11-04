@@ -352,3 +352,54 @@ def test_pending_limit_out_of_range_is_clamped_not_rejected(admin_client, queued
         assert body["limit"] == expected, raw          # 响应里的 limit 是实际生效值
         assert len(body["items"]) <= expected, raw
         assert body["total"] == len(queued), raw
+
+
+def test_merged_target_id_is_endpoint_validated(admin_client, queued):
+    """轮 2 裁决 A：`target_formula_id` 的 `""`/"abc" 等非法值由端点拒，不落参数层数组。
+
+    未选中的下拉框最自然的取值是 `""`——`int | None` 会被 pydantic 先拒、返回
+    FastAPI 的数组形状，正是 R-M5-8 要消灭的那类响应；类型判定搬进端点后，
+    非法形态一律 422 `invalid_decision_payload`，而**合法整数仍走原路径**：
+    指向不存在的方 → 404 `formula_not_found`，没有被顺手动成 422。
+    """
+    # brief 点名的两条（"" 与 "abc"）加上同族越界，逐个锁形状与码名。
+    # True 单列：bool 是 int 的子类，`true` 不该被当成"方 1"。
+    for bad in ("", "abc", "   ", "1.5", 0, -1, True, 2.5, {"id": 1}, ["7"]):
+        res = admin_client.post(f"/api/admin/pending/{queued[0].id}/decision",
+                                json={"action": "merged", "target_formula_id": bad})
+        assert res.status_code == 422, (bad, res.text)
+        detail = res.json()["detail"]
+        assert isinstance(detail, dict), (bad, detail)
+        assert set(detail) == {"code", "message"}, (bad, detail)
+        assert detail["code"] == "invalid_decision_payload", (bad, detail)
+        assert detail["message"], bad
+
+    # 合法整数（含整数字符串）继续走存在性检查：不存在的方仍是 404，不是 422。
+    for ghost in (999999, "999999"):
+        res = admin_client.post(f"/api/admin/pending/{queued[2].id}/decision",
+                                json={"action": "merged", "target_formula_id": ghost})
+        assert res.status_code == 404, (ghost, res.text)
+        assert res.json()["detail"]["code"] == "formula_not_found", (ghost, res.text)
+
+
+def test_pending_default_view_is_pending_only(admin_client, db_session, queued):
+    """轮 2 裁决 B（R-M5-10）：缺省 `decision` 按 `"pending"` 过滤，不再返回全量。
+
+    规格 §4 表格写明「默认 decision=pending」；计划的 T13 客户端本来就显式发
+    `?decision=pending`（plan:2563），所以这是 UI 中性改动。
+    """
+    target = _merge_target(db_session)
+    res = admin_client.post(f"/api/admin/pending/{queued[0].id}/decision",
+                            json={"action": "merged", "target_formula_id": target.id})
+    assert res.status_code == 200, res.text
+
+    body = admin_client.get("/api/admin/pending").json()
+    assert body["total"] == len(queued) - 1
+    names = [i["raw_name"] for i in body["items"]]
+    assert "甲" not in names, "刚被判 merged 的行不能出现在缺省视图里"
+    assert set(names) == {"乙", "丙"}
+    assert all(i["decision"] == "pending" for i in body["items"])
+
+    # 显式传值仍按该值过滤：merged 行只有 decision=merged 视图能查到。
+    merged_view = admin_client.get("/api/admin/pending?decision=merged").json()
+    assert [i["raw_name"] for i in merged_view["items"]] == ["甲"]

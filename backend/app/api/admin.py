@@ -128,18 +128,23 @@ def list_pending(
     # decision/reason 的 max_length、offset 的 ge=0 仍然留在参数层：它们越界时是
     # FastAPI 默认的 422 数组形状。R-M5-8 只裁决了 `limit`（钳制，不报错）；其余同类
     # 边界统一登记给 T16 写进规格 §13，本轮不扩权改行为。
-    decision: str | None = Query(default=None, max_length=20),
+    decision: str = Query(default="pending", max_length=20),
     reason: str | None = Query(default=None, max_length=40),
     limit: int = Query(default=50),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> dict:
-    """待审队列分页。`limit` 越界**钳制**到 [1, 200] 而不是 422（评审 R-M5-8 第 3 条）：
+    """待审队列分页。缺省 `decision` 按 `"pending"` 过滤（评审 R-M5-10：规格 §4 表格
+    写明「默认 decision=pending」，规格是权威，plan snippet 的不传参返回全量只是它的
+    论证，以规格为准）；显式传值仍按该值过滤，行为不变。
+    `limit` 越界**钳制**到 [1, 200] 而不是 422（评审 R-M5-8 第 3 条）：
     参数层校验会返回 `{"detail": [...]}` 数组，与 `frontend/lib/api.ts` 期望的
     `{"detail": {"code","message"}}` 不符；钳制后响应里的 `limit` 就是实际生效值。
     """
     limit = max(PENDING_LIMIT_MIN, min(limit, PENDING_LIMIT_MAX))
     stmt = select(PendingFormulaName)
+    # `if decision` 守卫保留：显式传 `?decision=`（空串）维持既有的"不过滤"老行为，
+    # 非空值一律按该值过滤——本轮只动了缺省值。
     if decision:
         stmt = stmt.where(PendingFormulaName.decision == decision)
     if reason:
@@ -176,11 +181,44 @@ class DecisionBody(BaseModel):
     由端点统一抛 §12 的 `invalid_decision_payload`；`name`/`note` 的长度上限
     同样在端点里判（阈值 MAX_NAME_CHARS / MAX_NOTE_CHARS，与原先 Field 的
     max_length 一致，只是换了执行位置，被挡掉的请求一个不多一个不少）。
+    `target_formula_id` 用 `object`（轮 2，原 `int | None`）：类型判定整体搬进
+    端点，`""`/"abc"/0/浮点/布尔/容器都不再触发 pydantic 的参数层 422 数组。
+    选 `object` 而不是 brief 给的另一选项 `int | str | None`，是因为后者仍会让
+    `{"a":1}` 这类容器值在参数层被拒、漏回 FastAPI 数组形状——同一个字段留两种
+    形状比留一种更糟。
     """
     action: str = ""
-    target_formula_id: int | None = None
+    target_formula_id: object = None
     name: str | None = None
     note: str | None = None
+
+
+def _parse_target_formula_id(raw: object) -> int | None:
+    """把宽松入参收敛成合法目标 id；返回 None 即"不是 ≥1 的整数"，由调用方抛 422。
+
+    只认两种形态：`int`（先排除 `bool`——它是 int 的子类，`true` 不该被当成方 1）
+    和能整-parse 的 `str`（未选中下拉框的 `""`、乱填的 `"abc"` 都落在这里）。
+    float / dict / list / None 一律非法：id 只会以整数或整数字符串发来，
+    收下其余形态等于把类型错误拖进数据库查询。
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str):
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return value if value >= 1 else None
+
+
+def _clip_repr(value: object, limit: int = 80) -> str:
+    """422 message 里回显非法值用：截断防止超长载荷撑爆响应体。"""
+    text = repr(value)
+    return text if len(text) <= limit else text[:limit - 3] + "…"
 
 
 @router.post("/pending/{pending_id}/decision")
@@ -192,6 +230,9 @@ def decide_pending(
     session: Session = Depends(get_session),
 ) -> dict:
     """登记一个候选方名判定，响应是更新后的单条 pending 项（`merged` 另带 `alias_created`）。
+
+    登记边界（轮 2 收编）：`target_formula_id` 从参数层类型校验（`int | None`）移进端点，
+    因为未选中的下拉框最自然的取值是 `""`，防御必须在后端，不能指望还没写的 T13 记得不发空串。
 
     `note` **本轮不落库**：M5-A 的 `pending_formula_name` 没有对应列（规格 §4 只要求端点
     接受该字段）。收到后按原样丢弃，不做任何持久化，也不回填进响应。
@@ -212,9 +253,11 @@ def decide_pending(
     # 测试里 get_session 被覆盖成共享 session，抛错时残留的脏属性会被后续查询 autoflush 出去。
     target: Formula | None = None
     if body.action == "merged":
-        if not body.target_formula_id:
-            raise _invalid_payload("归并必须指定目标方 target_formula_id")
-        target = session.get(Formula, body.target_formula_id)
+        target_id = _parse_target_formula_id(body.target_formula_id)
+        if target_id is None:
+            raise _invalid_payload("归并的 target_formula_id 必须是 ≥1 的整数，收到 "
+                                   + _clip_repr(body.target_formula_id))
+        target = session.get(Formula, target_id)
         if target is None:
             raise HTTPException(404, detail={"code": "formula_not_found", "message": "目标方不存在"})
     elif body.action == "confirmed_new":
