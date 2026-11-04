@@ -81,14 +81,24 @@ const qualityReport: QualityReport = {
     formula_total: 423, variant_gram: 200, variant_ancient: 200, item_total: 900,
   },
 };
-/** 空报告：四个行清单为空、三个聚合视图为空——每条空态断言的对照面。 */
+/** 空报告：四个行清单为空、聚合视图（③ 计数与 ⑤⑥⑦）为空——每条空态断言的对照面。
+ * R-M5-19 后 ③ 屏面改渲染 parse_failures 计数，故这里也要清空，空态才覆盖到 ③。 */
 const emptyQualityReport: QualityReport = {
   ...qualityReport,
-  herb_diff: [], dose_deviation: [], parse_failure_details: [], annotation_items: [],
+  herb_diff: [], dose_deviation: [], parse_failures: [], parse_failure_details: [], annotation_items: [],
   dangling_herbs: { rows: 0, distinct_terms: 0, top: [] },
   dose_state_distribution: {},
   pending_queue: { total: 0, by_decision: {}, by_reason: {} },
 };
+/** R-M5-19 判别夹具：③ 的按原因计数给两行（57/3，取值用裁定原文给的示例聚合）。
+ * 注：后端 quality.py:78-81 会把 no_formula_name 排除出 ③，这里只是渲染层夹具——
+ * 屏面断言"组件把响应里的计数照原样渲染出来"，与后端筛选口径无关。 */
+const countQualityReport: QualityReport = {
+  ...qualityReport,
+  parse_failures: [{ reason: "no_formula_name", count: 57 }, { reason: "multi_name_row", count: 3 }],
+};
+/** ③ 的节标题逐字（caption=可访问名=标题，指针 §4/concern 4 裁定）：判别用例锁串不锁形状。 */
+const FAILURES_TITLE = "③ 解析失败（按原因计数）";
 
 /** F-A 的两行逐字文案。这里刻意再写一遍字面量而不是从组件导入常量：
  * 用例要钉住的是"页面上出现的就是控制人给定的那串"，导入常量会让文案改动悄悄跟着跑。 */
@@ -521,7 +531,9 @@ describe("质量报告页", () => {
     render(<AdminQualityPage />);
     await screen.findByTestId("quality-report");
     expect(screen.getAllByRole("table")).toHaveLength(7);
-    const exportLinks = screen.getAllByRole("link", { name: "导出 CSV" });
+    // R-M5-19：③ 的文案改逐字「导出明细 CSV」（屏上计数、下载明细，文案不说谎），
+    // 匹配串扩成两类文案的并集；链接仍恰好 4 条、href 集合一字未松。
+    const exportLinks = screen.getAllByRole("link", { name: /导出(明细)? CSV/ });
     // 规格 §4.1：只有 herb_diff / dose_deviation / parse_failure_details / annotation_items 可导。
     expect(exportLinks).toHaveLength(4);
     const hrefs = exportLinks.map((link) => link.getAttribute("href"));
@@ -534,6 +546,59 @@ describe("质量报告页", () => {
     // 三张聚合视图（⑤⑥⑦）不给导出——伪列名的下载不在本页承诺内。
     expect(hrefs).not.toContain("/api/admin/quality-report/export?list=dangling_herbs");
     expect(hrefs).not.toContain("/api/admin/quality-report/export?list=pending_queue");
+  });
+
+  // —— R-M5-19：③「计数在屏、明细在导出」的三条判别用例 ——
+  it("③ 屏上渲染按原因计数表：57 在单元格内，明细表的列头与行不在页面上", async () => {
+    server.use(
+      http.get("/api/admin/session", () => HttpResponse.json(
+        { enabled: true, authenticated: true, expires_at: 1 })),
+      http.get("/api/admin/quality-report", () => HttpResponse.json(countQualityReport)),
+    );
+    render(<AdminQualityPage />);
+    await screen.findByTestId("quality-report");
+    const table = screen.getByRole("table", { name: FAILURES_TITLE });
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["原因", "数量"]);
+    expect(within(table).getByRole("cell", { name: "57" })).toBeInTheDocument();
+    // 裁定默认的行序：条数降序、再按原因字典型序——逐格断言渲染顺序。
+    expect(within(table).getAllByRole("cell").map((c) => c.textContent))
+      .toEqual(["no_formula_name", "57", "multi_name_row", "3"]);
+    // 明细面整体缺席：R-M5-2 合成格若还在屏上，必然带这两列表头与「路径#行号」行。
+    expect(screen.queryByRole("columnheader", { name: "候选方名" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "源文件#行号" })).not.toBeInTheDocument();
+    expect(screen.queryByText("03-金匮/方剂库.md#12")).not.toBeInTheDocument();
+    // 分工说明行逐字在场。
+    expect(within(table.closest("section") as HTMLElement)
+      .getByText("屏上按原因计数，导出给到可下钻的明细行。")).toBeInTheDocument();
+  });
+
+  it("③ 的导出链接 href 仍来自 adminCsvHref(\"parse_failure_details\")", async () => {
+    server.use(
+      http.get("/api/admin/session", () => HttpResponse.json(
+        { enabled: true, authenticated: true, expires_at: 1 })),
+      http.get("/api/admin/quality-report", () => HttpResponse.json(qualityReport)),
+    );
+    render(<AdminQualityPage />);
+    await screen.findByTestId("quality-report");
+    const section = screen.getByRole("table", { name: FAILURES_TITLE }).closest("section") as HTMLElement;
+    // ③ 恰好一条导出链接（getByRole 复数命中即失败），href 指向可下钻的明细清单。
+    const link = within(section).getByRole("link");
+    expect(link).toHaveAttribute("href", "/api/admin/quality-report/export?list=parse_failure_details");
+  });
+
+  it("③ 的链接文案逐字是「导出明细 CSV」而不是「导出 CSV」", async () => {
+    server.use(
+      http.get("/api/admin/session", () => HttpResponse.json(
+        { enabled: true, authenticated: true, expires_at: 1 })),
+      http.get("/api/admin/quality-report", () => HttpResponse.json(qualityReport)),
+    );
+    render(<AdminQualityPage />);
+    await screen.findByTestId("quality-report");
+    const section = screen.getByRole("table", { name: FAILURES_TITLE }).closest("section") as HTMLElement;
+    // 可访问名逐字匹配（getByRole name 默认全等）：锁住「文案不说谎」——
+    // 若实现退回「导出 CSV」，第一条就命中不到；若两处都渲染，第二条就失败。
+    expect(within(section).getByRole("link", { name: "导出明细 CSV" })).toBeInTheDocument();
+    expect(within(section).queryByRole("link", { name: "导出 CSV" })).not.toBeInTheDocument();
   });
 
   it("② 剂量偏差三键必填照渲染（不降级成占位符 —）", async () => {

@@ -42,7 +42,7 @@ function QualityReportBody() {
 
   const herbDiff = report.herb_diff;
   const doseDev = report.dose_deviation;
-  const failureDetails = report.parse_failure_details;
+  const parseFailures = report.parse_failures;
   const annotations = report.annotation_items;
   const dangling = report.dangling_herbs;
   const states = report.dose_state_distribution;
@@ -51,9 +51,11 @@ function QualityReportBody() {
   // 规格 §4.1：七个数据面各一表；只有四个行清单可导（herb_diff/dose_deviation/
   // parse_failure_details/annotation_items），三个聚合视图（dangling/dose_state/pending_queue）
   // 铺成 CSV 会造假列名，故不给导出链接。
+  // R-M5-19：③ 是「计数在屏、明细在导出」的分工节——表格渲染 parse_failures 按原因计数，
+  // 导出链接仍指 parse_failure_details（可下钻的行），文案逐字「导出明细 CSV」不说谎。
   const sections: {
     id: string; title: string; headers: string[]; rows: Cell[];
-    exportList?: string; pathColumn?: number;
+    exportList?: string; exportLabel?: string; hint?: string; pathColumn?: number;
   }[] = [
     {
       id: "herb_diff", title: "① 药材差异", exportList: "herb_diff",
@@ -68,10 +70,18 @@ function QualityReportBody() {
         ([herb, dev]) => [entry.formula, herb, dev.ancient_g, dev.gram_g, dev.deviation_pct])),
     },
     {
-      // R-M5-2：源文件 + 行号合成一格（表头保持四列），§13-8 只做「显示 + 可复制」不做链接。
-      id: "parse_failure_details", title: "③ 解析失败明细", exportList: "parse_failure_details",
-      headers: ["候选方名", "源文件#行号", "原因", "判定"], pathColumn: 1,
-      rows: failureDetails.map((r) => [r.raw_name, r.doc, r.source_row_no, r.reason, r.decision]),
+      // R-M5-19（规格 §4.1 前半句「计数表在 UI 上看」）：③ 屏上是 parse_failures 按原因计数，
+      // 两列（原因/条数；列名沿用 brief 页稿的「数量」，不自创新规则）。行序：brief 未给排序口径，
+      // 按裁定默认——条数降序、再按原因字典型序。导出链接不在这里换 list：仍走
+      // adminCsvHref("parse_failure_details")（后半句「导出给能下钻的行」），
+      // 文案逐字「导出明细 CSV」，配 hint 说明屏/下载两种形状。R-M5-2 的源路径合成格随明细退出屏面。
+      id: "parse_failures", title: "③ 解析失败（按原因计数）",
+      exportList: "parse_failure_details", exportLabel: "导出明细 CSV",
+      hint: "屏上按原因计数，导出给到可下钻的明细行。",
+      headers: ["原因", "数量"],
+      rows: [...parseFailures]
+        .sort((a, b) => b.count - a.count || (a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0))
+        .map((r) => [r.reason, r.count]),
     },
     {
       id: "annotation_items", title: "④ 注记被误抽为药味", exportList: "annotation_items",
