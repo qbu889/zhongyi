@@ -5,6 +5,8 @@ router 上，而登录端点必须能匿名访问；不拆就得给每条路由�
 路径沿用一期已有名字（`quality-report` / `reindex`）：错误文案、既有测试与运维习惯都
 指向它们，改名等于同时打断三条链路。
 """
+import csv
+import io
 from dataclasses import asdict
 from datetime import datetime, timezone  # timezone 供后续任务用
 
@@ -311,3 +313,62 @@ def reindex_now(session: Session = Depends(get_session)) -> dict:
     report = run_reindex(session)
     session.commit()
     return asdict(report)
+
+
+# —— Task 6：质量报告 CSV 导出。规格 §4.1：七张清单里只有下面四张是"行表"可导；
+# dangling_herbs / dose_state_distribution / pending_queue 是聚合 dict，
+# 硬摊成表会造假列名，所以一律 422 invalid_export_list（规格 §12 封闭码表，不新造码名）。
+CSV_HEADERS: dict[str, list[str]] = {
+    "herb_diff": ["方名", "pair_id", "仅古制有", "仅克数本有"],
+    "dose_deviation": ["方名", "pair_id", "药味", "古制g", "克数本g", "偏差%"],
+    "parse_failure_details": ["候选方名", "源文件", "行号", "原因", "判定"],
+    "annotation_items": ["药味文本", "variant_id", "formula_item_id"],
+}
+
+
+def _csv_text(headers: list[str], rows: list[list]) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")   # 固定 \n：跨机器行数可比
+    writer.writerow(headers)
+    writer.writerows(rows)
+    return buf.getvalue()
+
+
+def _join(values) -> str:
+    return "、".join(values or [])
+
+
+@router.get("/quality-report/export")
+def export_quality_list(
+    # R-M5-12 第 1 条：不写 `Query(max_length=40)`——那会走 FastAPI 默认的
+    # `{"detail": [数组]}`，与前端 api.ts / 规格 §12 的 `{"detail": {"code","message"}}`
+    # 形状冲突。合法性完全交给下面的清单校验：超长串自然落进"不在清单内"分支，
+    # 语义不丢、形状变对。
+    list: str = Query(alias="list"),
+    session: Session = Depends(get_session),
+) -> Response:
+    report = build_quality_report(session)
+    if list not in CSV_HEADERS:
+        raise HTTPException(422, detail={"code": "invalid_export_list",
+                                         "message": "只有 herb_diff / dose_deviation / "
+                                                    "parse_failure_details / annotation_items 可导出"})
+    headers = CSV_HEADERS[list]
+    if list == "herb_diff":
+        rows = [[r["formula"], r["pair_id"], _join(r["missing_in_gram"]),
+                 _join(r["missing_in_ancient"])] for r in report.herb_diff]
+    elif list == "dose_deviation":
+        rows = []
+        for entry in report.dose_deviation:
+            for herb, dev in (entry["items"] or {}).items():
+                rows.append([entry["formula"], entry["pair_id"], herb,
+                             dev.get("ancient_g", ""), dev.get("gram_g", ""),
+                             dev.get("deviation_pct", "")])
+    elif list == "parse_failure_details":
+        rows = [[r["raw_name"], r["doc"], r["source_row_no"] or "", r["reason"] or "",
+                 r["decision"]] for r in report.parse_failure_details]
+    else:
+        rows = [[r["herb_text"], r["variant_id"], r["formula_item_id"]]
+                for r in report.annotation_items]
+    return Response(content=_csv_text(headers, rows),
+                    media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{list}.csv"'})
