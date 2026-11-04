@@ -2798,10 +2798,12 @@ git commit -m "feat(m5): 问答日志看板页"
 `frontend/playwright.config.ts` 的后端 webServer `env` 增加一项（其余保持不动；端口仍是 8001）：
 
 ```ts
-      env: { E2E_PORT: "8001", ADMIN_TOKEN: process.env.E2E_ADMIN_TOKEN ?? "e2e-admin-token-0123456789abcdef" },
+      env: { E2E_PORT: "8001", ADMIN_TOKEN: process.env.E2E_ADMIN_TOKEN ?? "" },
 ```
 
-在文件顶部注释区补一行：管理端有登录门，e2e 用这条固定口令；它是测试值，不是生产凭据。
+在文件顶部注释区补一行：管理端有登录门，口令**只**从 `E2E_ADMIN_TOKEN` 环境变量来（≥16 字符，与后端
+`MIN_TOKEN_LENGTH=16` 同值）；**不写兜底字面量**（R-M5-24：口令不进仓库，测试值也不行——
+一旦这里放一条字面串，后来人加真口令会照抄这个位置）。未设置时排除 admin project 并打印原因。
 
 - [ ] **Step 2: 写 e2e 用例**
 
@@ -2809,7 +2811,7 @@ git commit -m "feat(m5): 问答日志看板页"
 // frontend/e2e/admin.spec.ts
 import { expect, test, type Page } from "@playwright/test";
 
-const TOKEN = process.env.E2E_ADMIN_TOKEN ?? "e2e-admin-token-0123456789abcdef";
+const TOKEN = process.env.E2E_ADMIN_TOKEN ?? "";   // 无兜底字面量（R-M5-24）；过短/未设置由后端 fail-closed
 
 async function login(page: Page) {
   await page.goto("/admin");
