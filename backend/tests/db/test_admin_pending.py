@@ -126,3 +126,33 @@ def test_noise_and_validation_errors(admin_client, db_session, queued):
                               json={"action": "merged", "target_formula_id": 999999})
     assert ghost.status_code == 404
     assert ghost.json()["detail"]["code"] == "formula_not_found"
+
+
+def test_human_decisions_survive_full_reindex(admin_client, db_session, queued):
+    """`loaders.py:8` 声明 decision/decided_by/decided_at 是「人工资产」，
+    但此前没有任何测试守着它。这里用一次真实 force 重建去证伪：
+    只要 loaders 的 upsert 更新集扩到这些列，本测试立刻红。
+    """
+    from app.admin.reindex import run_reindex
+    from app.db.models import Formula, FormulaAlias
+
+    target = _merge_target(db_session)
+    admin_client.post(f"/api/admin/pending/{queued[0].id}/decision",
+                      json={"action": "merged", "target_formula_id": target.id})
+    admin_client.post(f"/api/admin/pending/{queued[1].id}/decision",
+                      json={"action": "confirmed_new", "name": "手定方名"})
+    merged_alias = db_session.query(FormulaAlias).filter_by(name="甲").one()
+
+    run_reindex(db_session, force=True)
+    db_session.commit()
+    db_session.expire_all()
+
+    row = db_session.get(PendingFormulaName, queued[0].id)
+    assert (row.decision, row.decided_by) == ("merged", "admin")
+    assert row.decided_at is not None
+    other = db_session.get(PendingFormulaName, queued[1].id)
+    assert other.decided_name == "手定方名"
+    # 人工归并的 alias 也必须活下来：ETL 只按 (formula_id,name,doc) upsert，不删行
+    assert db_session.get(FormulaAlias, merged_alias.id) is not None
+    # 队列行本身不能被重建复制出来
+    assert db_session.query(PendingFormulaName).filter_by(raw_name="甲").count() == 1
