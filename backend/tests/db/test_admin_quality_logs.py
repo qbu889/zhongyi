@@ -223,3 +223,67 @@ def test_read_paths_without_any_ready_index(admin_client):
     assert preview["changed"] is True and preview["will_reuse"] is False
     assert preview["current"] is None
     assert preview["target_commit_hash"] == versions["target_commit_hash"]
+
+
+# —— Task 8：重建端点的 force、进程内锁与结构化失败 ——
+def test_reindex_reuses_when_hash_unchanged(admin_client, indexed, db_session):
+    before = db_session.query(IndexVersion).count()
+    body = admin_client.post("/api/admin/reindex", json={}).json()
+    assert body["reused"] is True
+    assert db_session.query(IndexVersion).count() == before          # 不产生新版本
+    # 响应形状仍是 asdict(ReindexReport)：§4 表格列的键一个都不能少（前端 T11 按键渲染）。
+    assert {"version_id", "commit_hash", "status", "reused", "embedding_model_version",
+            "counts", "skipped", "chunks", "elapsed_ms"} <= set(body)
+
+
+def test_reindex_bodyless_post_defaults_to_no_force(admin_client, indexed, db_session):
+    """`ReindexBody.force` 必须有默认值：`test_admin_api.py:26` 与既有运维习惯都在发
+    无 body 的 POST，字段一旦必填就是 422——这条把缺省语义显式钉住。"""
+    before = db_session.query(IndexVersion).count()
+    res = admin_client.post("/api/admin/reindex")
+    assert res.status_code == 200, res.text
+    assert res.json()["reused"] is True
+    assert db_session.query(IndexVersion).count() == before
+
+
+def test_force_reindex_appends_version_and_keeps_single_ready(admin_client, indexed, db_session):
+    body = admin_client.post("/api/admin/reindex", json={"force": True}).json()
+    assert body["reused"] is False and body["status"] == "ready"
+    ready = db_session.query(IndexVersion).filter_by(status="ready").count()
+    retired = db_session.query(IndexVersion).filter_by(status="retired").count()
+    assert ready == 1 and retired >= 1                               # 单 ready 不变量
+
+
+def test_concurrent_reindex_is_rejected_with_409(admin_client, indexed, monkeypatch):
+    from app.api import admin as admin_api
+
+    assert admin_api.REINDEX_LOCK.acquire(blocking=False), "锁应当可被占住"
+    try:
+        res = admin_client.post("/api/admin/reindex", json={"force": True})
+        assert res.status_code == 409
+        assert res.json()["detail"]["code"] == "reindex_in_progress"
+    finally:
+        admin_api.REINDEX_LOCK.release()
+
+
+def test_reindex_failure_is_structured_500_and_leaves_nothing_published(
+        admin_client, indexed, db_session, monkeypatch):
+    from app.api import admin as admin_api
+
+    before = db_session.query(IndexVersion).count()
+
+    def boom(session, embedder=None, *, embedding_model_version=None, force=False,
+             fail_after_load=False):
+        raise RuntimeError("注入失败")
+
+    monkeypatch.setattr(admin_api, "run_reindex", boom)
+    res = admin_client.post("/api/admin/reindex", json={"force": True})
+    assert res.status_code == 500
+    detail = res.json()["detail"]
+    assert detail["code"] == "reindex_failed"
+    assert set(detail) == {"code", "message"}                        # R-M5-12 两键形状
+    db_session.expire_all()
+    assert db_session.query(IndexVersion).count() == before           # 未提交即什么都没发生
+    # 锁必须在异常路径也归还：finally 里漏一行，管理端就永久 409 了。
+    assert admin_api.REINDEX_LOCK.acquire(blocking=False), "失败后锁必须已释放"
+    admin_api.REINDEX_LOCK.release()

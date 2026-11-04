@@ -7,6 +7,7 @@ router 上，而登录端点必须能匿名访问；不拆就得给每条路由�
 """
 import csv
 import io
+import threading
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
@@ -308,12 +309,47 @@ def decide_pending(
     return {"item": _pending_item(row).model_dump(), "alias_created": alias_created}
 
 
-# 本任务先按无 body 实现（与一期一致）；`ReindexBody`/锁/结构化 500 在 Task 8 再叠上来。
+# —— Task 8：重建的 force、进程内并发锁与结构化失败（规格 §7）——
+REINDEX_LOCK = threading.Lock()
+
+
+class ReindexBody(BaseModel):
+    """`force` **必须带默认值**：既有 `test_admin_api.py:26` 与运维习惯发的都是无 body 的
+    POST，字段一旦必填那条链路就变 422。
+    边界（进 §13，与 `refused=abc` 同类）：`force` 的非布尔值仍由 pydantic 在参数层拒绝，
+    形状是 FastAPI 默认的 `{"detail": [数组]}`；R-M5-12 第 4 条把这类布尔 coercion 留给框架，
+    本轮不为此新增错误码、也不加全局 handler。
+    """
+    force: bool = False
+
+
 @router.post("/reindex")
-def reindex_now(session: Session = Depends(get_session)) -> dict:
-    report = run_reindex(session)
-    session.commit()
-    return asdict(report)
+def reindex_now(
+    body: ReindexBody | None = None,
+    session: Session = Depends(get_session),
+) -> dict:
+    """同步重建。锁是进程内的：当前部署形态是单 uvicorn 进程。
+
+    多进程部署必须换成 DB 级咨询锁（pg_advisory_lock），否则两个 worker 各持一把
+    本地锁 = 没锁。规格 §13 已登记为边界。
+
+    响应形状保持 `asdict(ReindexReport)` 不变（§4）。幂等口径同 preview 的 `will_reuse`：
+    四元组全同且有 ready 行 → `reused=true`、不产生新版本；`force=true` 跳过该短路，
+    旧 ready 行转 `retired`、新行 `ready`，单 ready 不变量由 `run_reindex` 保证。
+    """
+    if not REINDEX_LOCK.acquire(blocking=False):
+        raise HTTPException(409, detail={"code": "reindex_in_progress",
+                                         "message": "已有重建在跑，请稍后再试"})
+    try:
+        report = run_reindex(session, force=bool(body and body.force))
+        session.commit()
+        return asdict(report)
+    except Exception as exc:
+        session.rollback()          # run_reindex 由调用方持事务：回滚 = 什么都没发生
+        raise HTTPException(500, detail={"code": "reindex_failed",
+                                         "message": f"重建失败：{exc}"})
+    finally:
+        REINDEX_LOCK.release()
 
 
 # —— Task 6：质量报告 CSV 导出。规格 §4.1：七张清单里只有下面四张是"行表"可导；

@@ -68,7 +68,11 @@ def test_fail_closed_when_token_unset(db_session, monkeypatch):
     app.dependency_overrides[get_session] = lambda: db_session
     client = TestClient(app)
     assert client.get("/api/admin/session").json()["enabled"] is False
+    # 规格 §11.1 点名 `/preview`：T7 的两条只读路径会把语料规模与版本历史吐给调用方，
+    # 未配 ADMIN_TOKEN 时同样必须 503，不能因为"只是读"就漏在门外。
     for res in (client.get("/api/admin/quality-report"),
+                client.get("/api/admin/index-versions"),
+                client.get("/api/admin/reindex/preview"),
                 client.post("/api/admin/session", json={"token": TOKEN}),
                 client.post("/api/admin/reindex")):
         assert res.status_code == 503
