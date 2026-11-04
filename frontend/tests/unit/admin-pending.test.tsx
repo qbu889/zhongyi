@@ -116,7 +116,10 @@ describe("PendingTable 三个判定动作", () => {
     expect(screen.getByText("请先选择目标方")).toBeInTheDocument();
     // 后端对缺失/空串的 target_formula_id 回 422 `invalid_decision_payload`（admin.py:262-265）；
     // 禁用 + 说明原因 = 不把维护者引向一条注定失败的写请求。
-    await user.click(confirm);
+    // F-2.4（评审 Minor 收紧）：这里用 `fireEvent.click` 而不是 `user.click`——user-event 对 disabled
+    // 目标直接跳过派发，`posts` 永远 0、断言不可能失败。fireEvent 把原生 click 打到 DOM 上，走组件自己的
+    // 路径（React 对 disabled 按钮抑制 onClick），这条 `posts === 0` 才真的钉住 `disabled={!open.target}`。
+    fireEvent.click(confirm);
     expect(posts).toBe(0);
   });
 
@@ -267,7 +270,10 @@ describe("PendingTable 三个判定动作", () => {
     expect(screen.getByText(/归并按「候选方名 \+ 源文件」移动人工归并别名/)).toBeInTheDocument();
     expect(screen.getByText(/立即写入 formula_alias/)).toBeInTheDocument();
     // 指针 §5：M5-A 没有撤销端点，UI 不得提供或暗示"按行撤销归并"。
-    expect(screen.queryByText(/撤销|回退|恢复/)).not.toBeInTheDocument();
+    // F-7：锁同时覆盖 `undo`（大小写不敏感）——一个写着 "Undo" 的按钮也不许溜过去。
+    expect(screen.queryByText(/撤销|回退|恢复|undo/i)).not.toBeInTheDocument();
+    // 指针 §4「不开弹窗」现在是断言而非读码：行内展开面板不是 dialog，屏上不得出现 dialog 角色。
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("判定列照后端原值渲染；已判定行把 decided_name 并列显示", () => {
@@ -288,6 +294,103 @@ describe("PendingTable 三个判定动作", () => {
       .map((header) => header.textContent);
     expect(headers).toEqual(["候选方名", "源文件#行号", "原因", "建议母方", "置信度", "判定", "操作"]);
   });
+
+  /* F-1（规格 §14-5）：`merged` 分支读 `alias_created`——幂等归并（后端 admin.py:304-310 回 false）
+     不能只播报「已记录判定。」，要点名"该别名已存在"，同时让维护者知道判定仍算记录、不是整次失败。 */
+  it("归并幂等分支（alias_created=false）播报含逐字「该别名已存在」，且判定已记录、不谎称新增", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post("/api/search", () => HttpResponse.json(searchResponse)),
+      http.post("/api/admin/pending/1/decision", () => HttpResponse.json(decisionResponse(
+        { decision: "merged", decided_by: "admin", decided_at: "x", decided_name: null }, false))),
+    );
+    render(<PendingTable items={[item]} total={1} onChanged={() => {}} />);
+    await user.click(screen.getByRole("button", { name: "归并到既有方" }));
+    await user.type(screen.getByRole("searchbox", { name: "检索" }), "桂");
+    await user.click(await screen.findByRole("button", { name: "选择 桂枝汤" }));
+    await user.click(screen.getByRole("button", { name: "确认归并" }));
+
+    const status = await screen.findByText("判定已记录，该别名已存在。");
+    expect(status).toHaveAttribute("role", "status");
+    // 闭集逐字 `该别名已存在` 必在；且不得出现"新增"——出现即把"未新增别名"的幂等分支谎报成新建。
+    expect(status.textContent).toContain("该别名已存在");
+    expect(status.textContent).not.toContain("新增");
+    // 判定成功仍会收起面板、触发重拉（不能把幂等当成失败）。
+    expect(screen.queryByRole("button", { name: "确认归并" })).not.toBeInTheDocument();
+  });
+
+  it("归并新建别名（alias_created=true）保持原播报「已记录判定。」，不误报别名已存在", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post("/api/search", () => HttpResponse.json(searchResponse)),
+      http.post("/api/admin/pending/1/decision", () => HttpResponse.json(decisionResponse(
+        { decision: "merged", decided_by: "admin", decided_at: "x", decided_name: null }, true))),
+    );
+    render(<PendingTable items={[item]} total={1} onChanged={() => {}} />);
+    await user.click(screen.getByRole("button", { name: "归并到既有方" }));
+    await user.type(screen.getByRole("searchbox", { name: "检索" }), "桂");
+    await user.click(await screen.findByRole("button", { name: "选择 桂枝汤" }));
+    await user.click(screen.getByRole("button", { name: "确认归并" }));
+
+    const status = await screen.findByText("已记录判定。");
+    expect(status).toHaveAttribute("role", "status");
+    expect(screen.queryByText("判定已记录，该别名已存在。")).not.toBeInTheDocument();
+  });
+
+  /* F-2（规格 §9:123）：这一屏此前没有「写操作进行中」状态面——POST 在途时按钮全可点、状态行被清空，
+     双击就会对 `merged` 再跑一次 alias 移动。延迟响应必须由测试自己持有 promise，**不用 timer**
+     （本计划已两次否决 Vitest 假定时器）。 */
+  it("写操作在途：按钮禁用并说明原因、双击只发一次 POST，resolve 后才进终态", async () => {
+    let posts = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    server.use(http.post("/api/admin/pending/1/decision", async () => {
+      posts += 1;
+      await gate;                       // 卡在测试手里的 promise 上，直到 release()
+      return HttpResponse.json(decisionResponse({ decision: "noise" }));
+    }));
+    render(<PendingTable items={[item]} total={1} onChanged={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "判为噪声" }));   // 展开面板＝第一击，不发请求
+    const submit = screen.getByRole("button", { name: "确认判噪声" });
+    fireEvent.click(submit);            // 第一提交：POST 在途
+    fireEvent.click(submit);            // 双击：同批第二个 click
+
+    // 在途状态面：该行三个动作按钮 + 提交按钮一律禁用，并给出"禁用原因"（§9:123 要的就是禁用 + 原因）。
+    expect(screen.getByRole("button", { name: "确认判噪声" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "归并到既有方" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "确认为独立方" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "判为噪声" })).toBeDisabled();
+    expect(screen.getByText(/判定提交中，请稍候/)).toBeInTheDocument();
+
+    // 双击只发一次：两个 click 同批派发，也只有一条 POST 到达端点（护栏在途期间挡住第二次写）。
+    await waitFor(() => expect(posts).toBe(1));
+    expect(posts).toBe(1);
+
+    release();                          // 放行在途响应 → 进入终态才播报
+    expect(await screen.findByText("已记录判定。")).toBeInTheDocument();
+    expect(screen.queryByText(/判定提交中，请稍候/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "归并到既有方" })).toBeEnabled();
+  });
+
+  /* F-4（规格 §9「已判定行默认展开留痕」）：decided_by/decided_at 此前屏上无处可看。 */
+  it("已判定行展示 decided_by 与 decided_at 留痕；未判定行不显示这两项的空壳", () => {
+    const decidedAt = "2026-01-02T03:04:05Z";
+    const shown = new Date(decidedAt).toLocaleString("zh-CN");
+    render(<PendingTable items={[
+      item, // pending：decided_by/decided_at 皆为 null
+      { ...item, id: 2, decision: "merged", decided_by: "admin", decided_at: decidedAt, decided_name: null },
+    ]} total={2} onChanged={() => {}} />);
+
+    // 已判定行：留痕次级行同时给出"谁判的"(admin) 和"何时判的"(M4 本地化口径 toLocaleString("zh-CN"))。
+    expect(screen.getByText("admin")).toBeInTheDocument();
+    expect(screen.getByText(shown)).toBeInTheDocument();
+    // 未判定行：整行内既无 admin 也无判定时间，也不留"判定留痕"的空壳。
+    const pendingRow = screen.getAllByRole("row").find((row) => within(row).queryByText("pending"));
+    expect(pendingRow).toBeDefined();
+    expect(within(pendingRow!).queryByText("admin")).not.toBeInTheDocument();
+    expect(within(pendingRow!).queryByText(shown)).not.toBeInTheDocument();
+    expect(within(pendingRow!).queryByText(/判定留痕/)).not.toBeInTheDocument();
+  });
 });
 
 describe("FormulaPicker", () => {
@@ -300,7 +403,9 @@ describe("FormulaPicker", () => {
     await user.type(screen.getByRole("searchbox", { name: "检索" }), "桂");
     await user.click(await screen.findByRole("button", { name: "选择 桂枝汤" }));
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ ref_type: "formula", ref_id: 9 }));
-    expect(screen.getByText("选中即写入归并目标；检索走 /api/search 精确通道。")).toBeInTheDocument();
+    // F-5：更正不准确串（字符串更正，不是放宽断言）——/api/search 返回 exact/literal/vector 三组，
+    // 三组都可选；只有归并结果才喂精确通道。逐字用闭集新串。
+    expect(screen.getByText("从检索结果里挑一个目标方；归并后该别名即刻进精确检索通道。")).toBeInTheDocument();
   });
 });
 
@@ -466,6 +571,37 @@ describe("候选方名审核页", () => {
     const notice = await screen.findByText(/此屏载入前 1 条/);
     expect(notice).toHaveTextContent("共 64 条");
     expect(notice).toHaveTextContent("limit 50");
+  });
+
+  /* F-3（规格 §9:123 截断面）：真实队列 64 行、单原因筛选仍 >50，而后端缺省 limit=50——
+     不发大 limit 时"请用筛选缩小范围"是给不到剩余行的建议。请求显式带 limit=200（端点钳制并回显）。 */
+  it("队列请求带上 limit=200，pending 队列一次装得下当前全量", async () => {
+    const urls: string[] = [];
+    server.use(
+      http.get("/api/admin/session", signedIn),
+      http.get("/api/admin/pending", ({ request }) => {
+        urls.push(request.url);
+        return HttpResponse.json(list);
+      }),
+    );
+    render(<AdminPendingPage />);
+    await screen.findByTestId("pending-table");
+    // 实际发出去的 URL——不是响应回显值——含 limit=200（admin.py:130-139 会钳制到 [1,200] 并回显）。
+    expect(new URL(urls[0]).searchParams.get("limit")).toBe("200");
+  });
+
+  it("总数(260) > 已渲染(200) 时截断提示仍在（limit=200 也装不下的余量交给 T16 分页）", async () => {
+    // 不许为过这条断言把提示删掉：mock total 260、items 给满 200 条，验证提示随 total>已渲染而出现。
+    const items = Array.from({ length: 200 }, (_, i) => ({ ...item, id: i + 1 }));
+    server.use(
+      http.get("/api/admin/session", signedIn),
+      http.get("/api/admin/pending", () => HttpResponse.json(
+        { total: 260, limit: 200, offset: 0, items })),
+    );
+    render(<AdminPendingPage />);
+    const notice = await screen.findByText(/此屏载入前 200 条/);
+    expect(notice).toHaveTextContent("共 260 条");
+    expect(notice).toHaveTextContent("limit 200");
   });
 
   it("pending 端点 401：交回 AdminShell 重新探针，不查标签表", async () => {

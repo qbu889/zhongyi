@@ -22,7 +22,7 @@ export function FormulaPicker({ legend, onPick }: {
     <fieldset className="rounded border border-line p-2">
       <legend className="text-sm font-semibold">{legend}</legend>
       <SearchSuggest kinds={FORMULA_KINDS} onCommit={() => {}} onPick={onPick} />
-      <p className="mt-1 text-xs text-ink/70">选中即写入归并目标；检索走 /api/search 精确通道。</p>
+      <p className="mt-1 text-xs text-ink/70">从检索结果里挑一个目标方；归并后该别名即刻进精确检索通道。</p>
     </fieldset>
   );
 }

@@ -40,6 +40,10 @@ function PendingBody() {
     setData(null);
     const params = new URLSearchParams({ decision });
     if (reason) params.set("reason", reason);
+    // F-3（规格 §9:123 截断面）：显式要 `limit=200`（端点钳制到 [1,200] 并回显，admin.py:130-139 /
+    // list_pending 的 max 常量），让 pending 队列一次就装得下当前全量（真实基线 64 行、单原因筛选仍 >50）。
+    // 缺省 limit=50 时「请用筛选缩小范围」是给不到剩余行的建议；真超过 200 时的分页 UI 登记 T16。
+    params.set("limit", "200");
     adminGet<PendingList>(`${PENDING_PATH}?${params.toString()}`)
       .then(setData)
       .catch((caught: unknown) => {

@@ -158,8 +158,11 @@ export const adminPost = <T,>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 export const adminCsvHref = (list: string) => `/api/admin/quality-report/export?list=${encodeURIComponent(list)}`;
 
-/** 决策 422 的 message 由端点按场景动态生成（见 _invalid_payload），不进这张表：
- * 表里没有 code 时 adminErrorLabel 落到后端原文，信息量更大。 */
+/** 决策 422 的 code `invalid_decision_payload` **就在**这张表里（见下方），因此命中它的是闭集
+ * 标签「参数不完整」，而端点按场景逐字段生成的具体 message（见 _invalid_payload，如
+ * 「归并的 target_formula_id 必须是 ≥1 的整数，收到 …」）被**有意吞掉**、不会显示。
+ * 注：表里没有的 code 才会落到后端原文——但 `invalid_decision_payload` 不属于这一类。
+ * 「显示闭集标签 vs 透传后端原文」的取舍登记给 T16 判，本轮只更正注释、不改行为。 */
 export const ADMIN_ERROR_LABELS: Record<string, string> = {
   admin_disabled: "管理端未启用：请设置 ADMIN_TOKEN（至少 16 字符）",
   admin_unauthorized: "口令不正确",
