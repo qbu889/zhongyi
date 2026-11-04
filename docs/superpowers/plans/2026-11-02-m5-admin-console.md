@@ -113,7 +113,9 @@ def test_rejects_tampered_and_expired():
     value, _ = auth.issue_cookie()
     stamp, signature = value.split(".", 1)
     assert auth.verify_cookie(f"{int(stamp) + 10}.{signature}") is False   # 改期必须作废
-    assert auth.verify_cookie(f"{stamp}.{signature[:-1]}0") is False        # 改签名必须作废
+    tampered = signature[:-1] + ("1" if signature[-1] != "1" else "2")
+    assert auth.verify_cookie(f"{stamp}.{tampered}") is False               # 改签名必须作废（确定性）
+    assert auth.verify_cookie(f"+{stamp}.{signature}") is False             # 非规范秒数一律拒
     expired, _ = auth.issue_cookie(ttl=-10)
     assert auth.verify_cookie(expired) is False
     assert auth.verify_cookie(None) is False
@@ -129,6 +131,28 @@ def test_wrong_token_rejected_by_constant_time_compare():
 
 Run: `cd backend && .venv/bin/python -m pytest tests/unit/test_admin_auth.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.admin.auth'`
+
+补两条测试（短口令闸门与 bytes 比较可达性）：
+
+```python
+def test_short_token_disables_both_surfaces(monkeypatch):
+    """`verify_cookie`/`login_ok` 内部的 `admin_enabled()` 闸门必须被测：
+    没有它，5 字符 ADMIN_TOKEN 签出的 cookie 仍可登录。"""
+    monkeypatch.setattr(settings, "admin_token", "short")
+    with monkeypatch.context() as m:      # 先签一枚合法 cookie，再把口令改短
+        m.setattr(settings, "admin_token", TOKEN)
+        value, _ = auth.issue_cookie()
+    assert auth.verify_cookie(value) is False
+    assert auth.login_ok("short") is False
+
+
+def test_non_ascii_input_is_rejected_not_raising(monkeypatch):
+    """远端可控输入不能冒 TypeError（会成 500）；口令/ cookie 含中文必须判为无效。"""
+    assert auth.verify_cookie("中文.abc") is False
+    stamp, _ = auth.issue_cookie()
+    assert auth.verify_cookie(f"{stamp.split('.')[0]}.中文签名") is False
+    assert auth.login_ok("口令不正确") is False
+```
 
 - [ ] **Step 4: 实现内核**
 
@@ -161,7 +185,8 @@ def _sign(expiry: int) -> str:
 
 
 def issue_cookie(ttl: int | None = None) -> tuple[str, int]:
-    max_age = settings.admin_session_ttl or _COOKIE_MAX_AGE
+    configured = settings.admin_session_ttl
+    max_age = configured if configured and configured > 0 else _COOKIE_MAX_AGE
     expiry = int(time.time()) + (ttl if ttl is not None else max_age)
     return f"{expiry}.{_sign(expiry)}", expiry
 
@@ -174,19 +199,24 @@ def verify_cookie(value: str | None) -> bool:
         expiry = int(stamp)
     except ValueError:
         return False
+    if not stamp.isascii() or not stamp.isdigit():   # 只收规范十进制秒，杜绝 "+17…"/"1_7…"/空格
+        return False
     if expiry < int(time.time()):
         return False
-    return hmac.compare_digest(signature, _sign(expiry))
+    # compare_digest 对含非 ASCII 的 str 会抛 TypeError，而 cookie 值来自远端头：必须比 bytes
+    return hmac.compare_digest(signature.encode(), _sign(expiry).encode())
 
 
 def login_ok(token: str) -> bool:
     if not admin_enabled():
         return False
-    return hmac.compare_digest(token or "", settings.admin_token)
+    # 同理：用户粘贴中文口令是正常输入，不能让它冒成 500
+    return hmac.compare_digest((token or "").encode(), settings.admin_token.encode())
 
 
 def cookie_max_age() -> int:
-    return settings.admin_session_ttl or _COOKIE_MAX_AGE
+    configured = settings.admin_session_ttl
+    return configured if configured and configured > 0 else _COOKIE_MAX_AGE
 ```
 
 - [ ] **Step 5: 运行确认通过**
