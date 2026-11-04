@@ -118,7 +118,7 @@ function QualityReportBody() {
     <div data-testid="quality-report">
       {sections.map((section) => <QualitySection key={section.id} {...section} />)}
       <p className="mt-4 text-xs text-ink/70">
-        ⑤⑥⑦ 不提供导出；③ 屏上按原因计数，导出给到明细行。
+        ⑤⑥⑦ 不提供导出；③ 屏上按原因计数，导出给到明细行。要下钻待审真实行请去「候选方名」页。
       </p>
     </div>
   );
