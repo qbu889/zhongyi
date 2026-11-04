@@ -2980,7 +2980,7 @@ git commit -m "test(m5): 管理端端到端验收与 axe 扫描"
 
 - [ ] **Step 3: 运行说明（dev 库 ALTER 与手工步骤）**
 
-在 M5-A 验收记录里写三条：dev 库需 `ALTER TABLE pending_formula_name ADD COLUMN decided_name TEXT;`（`zhongyi_e2e` 与测试库由 `bootstrap` 的 drop/create 自动获得）；e2e 口令是 `playwright.config.ts` 里的固定测试值，生产必须另设 `ADMIN_TOKEN`（≥16 字符）；管理端公网暴露前必须补 Origin 校验与 TLS，且 `secure=False` 是本地明文 http 的刻意选择。
+在 M5-A 验收记录里写三条：dev 库需 `ALTER TABLE pending_formula_name ADD COLUMN decided_name TEXT;`（`zhongyi_e2e` 与测试库由 `bootstrap` 的 drop/create 自动获得）；**e2e 口令的终形（R-M5-24；本条原文写的是"e2e 口令是 `playwright.config.ts` 里的固定测试值"，那正是被整枝评审点名的残留指令——形似凭据的串留在被跟踪文档里，后来人加真口令时会照抄那个位置，所以按本仓库 `10e2690` 的同一口径涂掉）**：口令**只**从环境变量 `E2E_ADMIN_TOKEN` 来（≥16 字符，与后端 `auth.MIN_TOKEN_LENGTH=16` 同值），**仓库内零字面量**（运行文件、规格、计划片段都不许出现），满足时以 `ADMIN_TOKEN` 注入 e2e 后端 webServer；缺失/过短时是**两种行为而不是一种**——本地（不设 `CI`）打印一行原因并把 admin project 整个从运行计划里去掉、`--list` 少整组 admin 用例、退出码 0，CI（`CI` 已设）在配置加载期直接抛错、非零退出，不接受"少跑一个 project 的绿"（F-7，逐字实测见规格 §13-17 与 §11）；生产必须另设 `ADMIN_TOKEN`（≥16 字符，e2e 口令不构成任何生产凭据）；管理端公网暴露前必须补 Origin 校验与 TLS，且 `secure=False` 是本地明文 http 的刻意选择。
 
 - [ ] **Step 4: 全量复跑 + 提交**
 
