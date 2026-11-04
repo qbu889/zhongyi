@@ -8,18 +8,18 @@ router 上，而登录端点必须能匿名访问；不拆就得给每条路由�
 import csv
 import io
 from dataclasses import asdict
-from datetime import datetime, timezone  # timezone 供后续任务用
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import Integer, and_, cast, delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.admin import auth
 from app.admin.quality import build_quality_report
 from app.admin.reindex import run_reindex
-from app.db.models import Formula, FormulaAlias, PendingFormulaName
+from app.db.models import Formula, FormulaAlias, PendingFormulaName, QaLog
 from app.db.session import get_session
 
 public_router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -372,3 +372,100 @@ def export_quality_list(
     return Response(content=_csv_text(headers, rows),
                     media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{list}.csv"'})
+
+
+# —— Task 9：问答日志三个只读聚合端点（规格 §8）。全部只读 `qa_log` 现有列，
+# 不新增表、不写库；聚合口径与 §4 表格一致。
+WINDOW_DAYS_MIN = 1
+WINDOW_DAYS_MAX = 365     # 阈值沿用改动前 `Query(ge=1, le=365)` 的两个数值，只是从报错改成钳制（R-M5-12 第 2 条）
+LOGS_LIMIT_MIN = 1
+LOGS_LIMIT_MAX = 200      # 同上（R-M5-12 第 3 条），`/logs/refusals` 与 `/logs` 共用
+
+
+def _since(window_days: int) -> datetime:
+    """窗口起点。created_at 列是 timestamptz，必须用带时区的 now 比较，
+    naive datetime 会被 Postgres 按会话时区解释、边界漂一天。"""
+    return datetime.now(timezone.utc) - timedelta(days=window_days)
+
+
+@router.get("/logs/summary")
+def logs_summary(
+    window_days: int = Query(default=7),
+    session: Session = Depends(get_session),
+) -> dict:
+    """概览四卡：累计提问 / 近 N 日提问 / 拒答率 / 平均证据命中。
+
+    R-M5-12 第 2 条：`window_days` 越界不在参数层 422（FastAPI 默认形状是
+    `{"detail": [数组]}`，与规格 §12 两键形状不符），端点内钳制到 [1, 365]，
+    响应回显钳制后的实际生效值——与 `GET /pending` 的 limit 同一口径。
+    """
+    window_days = max(WINDOW_DAYS_MIN, min(window_days, WINDOW_DAYS_MAX))
+    since = _since(window_days)
+    total = session.scalar(select(func.count()).select_from(QaLog)) or 0
+    # `func.sum(QaLog.refused)` 在 Postgres 直接报 function sum(boolean) does not exist：
+    # 布尔列先 cast 成整数再求和，聚合口径（拒答条数）不变。
+    recent, refused, avg_hits = session.execute(
+        select(func.count(), func.sum(cast(QaLog.refused, Integer)), func.avg(QaLog.hit_count))
+        .where(QaLog.created_at >= since)).one()
+    recent = recent or 0
+    refused = refused or 0
+    return {"queries_total": total, "queries_recent": recent,
+            "refusal_rate": round(refused / recent, 4) if recent else 0.0,
+            "avg_hit_count": round(float(avg_hits or 0), 2),
+            "window_days": window_days}
+
+
+@router.get("/logs/refusals")
+def logs_refusals(
+    window_days: int = Query(default=7),
+    limit: int = Query(default=50),
+    session: Session = Depends(get_session),
+) -> dict:
+    """高频拒答词 = 语料补缺清单，也是 D2 阈值校准的第一份输入。
+
+    按 `query` 原文分组，不做任何归一化：错字/繁简归一是 E3 的未决边界，
+    在这里偷偷小写会把「同一句话被写成两种」的真相抹平（规格 §8）。
+    R-M5-12 第 2/3 条：`window_days`、`limit` 越界端点内钳制（[1,365]、[1,200]），
+    不 422，响应回显生效值。
+    """
+    window_days = max(WINDOW_DAYS_MIN, min(window_days, WINDOW_DAYS_MAX))
+    limit = max(LOGS_LIMIT_MIN, min(limit, LOGS_LIMIT_MAX))
+    rows = session.execute(
+        select(QaLog.query, func.count(), func.max(QaLog.top_score))
+        .where(and_(QaLog.refused.is_(True), QaLog.created_at >= _since(window_days)))
+        .group_by(QaLog.query)
+        .order_by(func.count().desc(), QaLog.query.asc())
+        .limit(limit)).all()
+    return {"window_days": window_days, "limit": limit,
+            "items": [{"query": q, "count": c, "top_score_max": top} for q, c, top in rows]}
+
+
+@router.get("/logs")
+def list_logs(
+    # R-M5-12 第 3/4 条：`limit` 钳制 [1,200]、`offset` 钳制 >=0（越界不报错，
+    # 响应回显有效值）；`intent` 是透传的普通过滤值，未知值诚实返回空列表，
+    # 规格 §12 没为它定义错误码，也不新造。
+    # 已登记边界：非布尔串（`refused=abc`）与非整数（`limit=abc`）仍会在参数层
+    # 被 FastAPI 默认 422 数组形状拦下——R-M5-12 第 4 条明确 `refused` 保持原样、
+    # 第 5 条禁止全局 RequestValidationError handler，残留形状不统一，进 §13。
+    intent: str | None = Query(default=None),
+    refused: bool | None = Query(default=None),
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    session: Session = Depends(get_session),
+) -> dict:
+    """明细表：`intent` / `refused` 筛选 + 分页，按 id 倒序（新日志在前）。只读。"""
+    limit = max(LOGS_LIMIT_MIN, min(limit, LOGS_LIMIT_MAX))
+    offset = max(0, offset)
+    stmt = select(QaLog)
+    if intent:
+        stmt = stmt.where(QaLog.intent == intent)
+    if refused is not None:
+        stmt = stmt.where(QaLog.refused.is_(refused))
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = list(session.scalars(stmt.order_by(QaLog.id.desc()).limit(limit).offset(offset)))
+    return {"total": total, "limit": limit, "offset": offset, "items": [
+        {"id": r.id, "created_at": r.created_at.isoformat() if r.created_at else None,
+         "session_id": r.session_id, "query": r.query, "intent": r.intent,
+         "refused": r.refused, "top_score": r.top_score, "hit_count": r.hit_count}
+        for r in rows]}
