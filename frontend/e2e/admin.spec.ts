@@ -2,6 +2,18 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { blocking } from "./a11y-helpers";
 
+// —— 顺序是契约，不是巧合（F-2 / 规格 §11:154 把这套件就叫 serial）——
+// 本文件多条用例共享同一个可变库（zhongyi_e2e）与同一份索引，彼此有真实的声明顺序依赖：
+//   1) 「管理端无障碍 /admin/pending（含已判定行…）」扫的是 merged 留痕态，那条已判定行是
+//      「归并即时生效…（全程不重建）」用例写入的——见文件末尾该 axe 用例前的注释；
+//   2) 「重建 preview 到确认（reused）」读的是刚 bootstrap 的索引基线，
+//      「强制重建走 UI（force）」会把 ready 版本 retire、另起新行，两者都在动同一份索引。
+// 之前只靠 playwright.config.ts 的 workers:1 + fullyParallel:false 兜底成立；一句 `-j 2`、
+// `--shuffle` 或 `-g "管理端无障碍"` 就能把它打破，共享可变库上并发重建还会撞 REINDEX_LOCK 出 409。
+// 用 test.describe.configure({ mode: "serial" }) 把"按声明顺序、一次一条"变成显式契约
+// （与 M4 的 e2e/chat.spec.ts 同一写法），任何断言内容都不因此改动。
+test.describe.configure({ mode: "serial" });
+
 // —— 口令（R-M5-24 / T15 指针 §1）——
 // 本文件零口令字面量：TOKEN 只从 process.env.E2E_ADMIN_TOKEN 取。
 // 后端 fail-closed（未设置或 <16 字符 → /api/admin/* 全 503 admin_disabled），
@@ -334,8 +346,19 @@ test("路径#行号合成格：真实浏览器里可整段选中，复制按钮�
 });
 
 test("强制重建走 UI：勾选 → 确认 → 版本行 +1、四类计数不减少", async ({ page }) => {
-  // 同步全量重建是分钟级（e2e_bootstrap 整库重建实测约 3 分钟），远超 90s 默认时限。
-  test.setTimeout(600_000);
+  // —— 超时按"实测 × 有依据的余量"定（F-3），别把两件事混成一个数 ——
+  // 本机这一轮实测（本地 embedder、无网络）：
+  //   • 冷启动 bootstrap：start_e2e.sh 里的 drop_all + create_all + run_reindex 整库重建，
+  //     实测 ~3.0s（`e2e db ready: version=1 chunks=1818`）。它由 backend webServer 触发、
+  //     受 playwright.config.ts 的 webServer.timeout(180s) 约束，**不在本用例里、也不需要本
+  //     用例的 timeout 覆盖**——之前注释写的"整库重建实测约 3 分钟"是把指针的估计当成了实测，
+  //     控制人已采纳量级更正，T16 runbook 按这个 3 秒级拆分写。
+  //   • 在 UI 里点一次 force 重建（本用例）：整条用例（登录+预览+同步重建+版本表校验）实测 ~3.1s，
+  //     同步重建是其中主项，量级同样是秒级。
+  // test.setTimeout 收到 120s：它必须大于本用例内部的「重建等待 60s」+「新版本行 ready 重取 30s」
+  //   + 登录/预览的几秒，故取 120s（≈3.1s 实测的 ~40×，覆盖语料较 1818 基线增长后重建耗时线性上升、
+  //   机器负载/CI 冷缓存的放大），同时把"真挂住"暴露时间从原来的 600s（白等 9 分钟）压到 ≤2 分钟。
+  test.setTimeout(120_000);
   await login(page);
   await page.goto("/admin");
   const panel = page.getByTestId("reindex-panel");
@@ -354,8 +377,10 @@ test("强制重建走 UI：勾选 → 确认 → 版本行 +1、四类计数不�
   await forceBox.check();
   await page.getByRole("button", { name: "确认重建" }).click();
 
+  // 重建结果等待收到 60s：本机一次 force 重建实测 ~3s，60s ≈20×（覆盖语料增长使重建耗时随 chunk
+  // 数线性上升 + 冷/负载机放大）。刻意 < test.setTimeout(120s)，真挂住先在这里给可读报错而非撞总时限。
   await expect(panel.getByRole("status")).toContainText(/重建完成：版本 #\d+/, {
-    timeout: 540_000,
+    timeout: 60_000,
   });
   const doneText = await panel.innerText();
   const newVersion = /重建完成：版本 #(\d+)/.exec(doneText)?.[1];
@@ -376,7 +401,10 @@ test("强制重建走 UI：勾选 → 确认 → 版本行 +1、四类计数不�
 
 // —— axe 扫描（指针 §3.2）：管理端四个路由都扫，且 /admin/pending 必须扫到
 // "含已判定行"的状态——Task 13 的 colSpan 留痕行是全计划唯一没被 axe 验证过的
-// DOM 形状，只扫全 pending 的队列等于没扫。判定动作在上面的归并用例里已经发生。
+// DOM 形状，只扫全 pending 的队列等于没扫。这里的"已判定"状态不是凭空造的：它依赖
+// 前面的「归并即时生效：审核后的别名能在四大库检索里精确命中目标方（全程不重建）」用例
+// 先真判定一条（该用例把候选归并到 桂枝汤、留下 merged 决策 + colSpan 留痕行）；
+// serial 声明保证它先于本条 axe 用例执行，不再只是"排在上面"的巧合。
 for (const [path, testid] of [
   ["/admin", "version-table"],
   ["/admin/quality", "quality-report"],
@@ -404,5 +432,31 @@ test("管理端无障碍 /admin/pending（含已判定行与判定留痕行）",
   expect(await table.getByText("判定留痕：").first().evaluate(
     (el) => (el as HTMLTableCellElement).colSpan,
   )).toBe(7);
+  expect(await blocking(page)).toEqual([]);
+});
+
+// —— F-1（§14-11 第三态）：重建确认卡从没被 axe 扫过 ——
+// 概览/质量/日志/待审四个面扫了，但规格 §14-11 点名的第三个状态——ReindexPanel.tsx:96 那个
+// role="group" aria-label="重建确认"（本轮新加了 input#reindex-force + label 的地方）——只在
+// 功能用例里被点过、没被无障碍扫过。这里取 F-1 的第二种方案（加第 5 条 axe 用例）而不是往既有
+// 重建用例里塞一行断言，理由：① 它把"§14 三态都扫过"做成一条独立、可命名的交付物，和上面四条
+// axe 用例同组；② 用例显式断言确认卡"可见"后才扫描——预览只发一个 GET /reindex/preview（只读、
+// 不写库、不点确认），phase 停在 confirm、卡片不会自关，扫描一定发生在卡片在屏的时刻（可判别，
+// 不会退化成"卡关了再扫"）；③ 只读预览不碰归并/force 的写库顺序，与 serial 声明互不干扰。
+test("管理端无障碍 /admin 重建确认卡（§14-11 第三态：含 force 勾选框与 label）", async ({ page }) => {
+  await login(page);
+  await page.goto("/admin");
+  const panel = page.getByTestId("reindex-panel");
+  await expect(panel).toBeVisible();
+
+  await page.getByRole("button", { name: "预览重建影响" }).click();
+  const dialog = page.getByRole("group", { name: "重建确认" });
+  // 断言之前的状态里确认卡确实可见（卡片含目标 commit 文案 + 本轮新增的 force 勾选框）。
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("· 目标 commit");
+  const forceBox = page.getByRole("checkbox", { name: "强制重建（即使语料与规则未变化）" });
+  await expect(forceBox).toBeVisible();
+  // 卡片在屏时扫描：原生 checkbox 由 htmlFor label 取得可访问名、group 有 aria-label，
+  // 这正是本轮交付要证明"扫到了卡片本身"而非扫过登录后的空概览。
   expect(await blocking(page)).toEqual([]);
 });
