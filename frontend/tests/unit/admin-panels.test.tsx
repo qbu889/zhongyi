@@ -182,6 +182,36 @@ describe("ReindexPanel", () => {
     expect(status).not.toHaveTextContent("无需重建");
   });
 
+  it("强制重建是一次性升级：请求返回后勾选复位，第二次确认不再 force", async () => {
+    // 控制人裁定：勾选是「这一次强制重建」，不是「以后都强制」。若让它粘住，
+    // 下一次点「确认重建」会在用户以为走复用路径的情况下再把整库强制重建一遍。
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    server.use(
+      http.get("/api/admin/reindex/preview", () => HttpResponse.json(preview)),
+      http.post("/api/admin/reindex", async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json(freshReport);
+      }),
+    );
+    render(<ReindexPanel onDone={() => {}} />);
+
+    await user.click(screen.getByRole("button", { name: "预览重建影响" }));
+    const first = await screen.findByRole("group", { name: "重建确认" });
+    await user.click(within(first).getByRole("checkbox", { name: FORCE_LABEL }));
+    await user.click(screen.getByRole("button", { name: "确认重建" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("重建完成：版本 #8");
+    expect(bodies[0]).toEqual({ force: true });
+
+    await user.click(screen.getByRole("button", { name: "预览重建影响" }));
+    const second = await screen.findByRole("group", { name: "重建确认" });
+    expect(within(second).getByRole("checkbox", { name: FORCE_LABEL })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "确认重建" }));
+    // 等到第二次请求落地再断言，避免读到还没 push 的数组长度。
+    await vi.waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1]).toEqual({ force: false });
+  });
+
   it("409 并发锁给出专门文案而不是通用失败，且不把状态机停在 running", async () => {
     const user = userEvent.setup();
     server.use(

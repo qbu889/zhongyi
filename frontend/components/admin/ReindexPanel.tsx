@@ -52,6 +52,10 @@ export function ReindexPanel({ onDone }: { onDone: () => void }) {
       // 永不可达（`admin.py:346` 原样透传 `body.force`）。勾选即维护者点名"我不管，重来一遍"，
       // 后端此时必全量重建并新起一个版本行。
       const result = await adminPost<ReindexReport>("/api/admin/reindex", { force });
+      // 一次性升级语义（控制人裁定）：请求一返回就回到不勾选，成功与失败都算用完。
+      // 勾选是「这一次强制重建」，不是「以后都强制」——留着它，下一次「确认重建」
+      // 会在用户以为走复用路径的情况下再把整库强制重建一遍。
+      setForce(false);
       setReport(result);
       if (result.reused) {
         // 复用路径后端给 counts={}、chunks=0；谎称「重建完成 / 0 个 chunk」会让维护者
@@ -64,6 +68,9 @@ export function ReindexPanel({ onDone }: { onDone: () => void }) {
       }
       onDone();
     } catch (error) {
+      // 失败同样算用完一次升级：409 退回 confirm 时若勾选还留着，
+      // 下一次点「确认重建」会静默地强制重建。
+      setForce(false);
       if (isAdminUnauthorized(error)) { setPhase("confirm"); reprobe(); return; }
       setMessage(adminErrorLabel(error));
       // 500 reindex_failed（事务已回滚）进 failed 终态；409 等可重试错误退回 confirm——
