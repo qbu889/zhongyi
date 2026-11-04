@@ -347,11 +347,13 @@ def export_quality_list(
     list: str = Query(alias="list"),
     session: Session = Depends(get_session),
 ) -> Response:
-    report = build_quality_report(session)
+    # 校验必须先于建报告：非法 `list=` 不该跑完整聚合，更不该让报告构建异常
+    # 把一个客户端错误显示成 500（评审 Minor 1）。
     if list not in CSV_HEADERS:
         raise HTTPException(422, detail={"code": "invalid_export_list",
                                          "message": "只有 herb_diff / dose_deviation / "
                                                     "parse_failure_details / annotation_items 可导出"})
+    report = build_quality_report(session)
     headers = CSV_HEADERS[list]
     if list == "herb_diff":
         rows = [[r["formula"], r["pair_id"], _join(r["missing_in_gram"]),

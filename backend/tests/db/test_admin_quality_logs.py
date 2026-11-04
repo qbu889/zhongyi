@@ -44,6 +44,20 @@ def test_export_quotes_comma_values(admin_client, indexed):
     assert all(len(line) == 5 for line in body)          # 逗号/引号字段必须仍是一行五列
 
 
+def test_export_annotation_items_headers_and_rows(admin_client, indexed):
+    """第四张可导出清单必须有独立用例：这条分支的键名一旦写错，
+    没有它则仍会"全绿 + 500"（评审 Minor 2）。"""
+    res = admin_client.get("/api/admin/quality-report/export?list=annotation_items")
+    assert res.status_code == 200
+    assert 'filename="annotation_items.csv"' in res.headers["content-disposition"]
+    rows = _rows(res.text)
+    assert rows[0] == ["药味文本", "variant_id", "formula_item_id"]
+    report = admin_client.get("/api/admin/quality-report").json()
+    assert len(rows) - 1 == len(report["annotation_items"])
+    assert len(rows) - 1 > 0                     # 空表会让本用例退化成恒真断言
+    assert all(len(line) == 3 for line in rows)  # 药味文本含逗号也必须仍是三列
+
+
 def test_aggregate_lists_are_not_exportable(admin_client, indexed):
     for name in ("dangling_herbs", "dose_state_distribution", "pending_queue", "nope"):
         res = admin_client.get(f"/api/admin/quality-report/export?list={name}")
