@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { LoginCard } from "@/components/admin/LoginCard";
+import { ApiError } from "@/lib/api";
 import { adminErrorLabel, adminProbe, type AdminGate } from "@/lib/admin";
 
 const NAV = [
@@ -13,19 +14,37 @@ const NAV = [
   ["/admin/logs", "问答日志"],
 ] as const;
 
+/** `unreachable` 态只报技术标识（错误码 + HTTP 状态），刻意**不**过 `ADMIN_ERROR_LABELS`：
+ * 表里 `admin_unauthorized` → 「口令不正确」，探针若拿到 401 就会对一个还没输入过口令的人
+ * 说"你口令错了"。这一条与 T11–T14 的「数据端点 401 不查标签表」是同一约束。 */
+function probeDetail(error: unknown): string {
+  return error instanceof ApiError ? `${error.code} · HTTP ${error.status}` : "请求未送达或响应无法解析";
+}
+
 export function AdminShell({ title, path = "", children }: {
   title: string;
   /** 当前路由，用于 aria-current；不给则不高亮（登录门测试不需要导航态）。 */
   path?: string;
   children: ReactNode;
 }) {
-  const [gate, setGate] = useState<AdminGate>("unknown");
+  const [gate, setGate] = useState<AdminGate>("checking");
   const [probeError, setProbeError] = useState("");
   const probe = useCallback(() => {
-    setGate("unknown");
+    setGate("checking");
+    setProbeError("");
     adminProbe()
       .then((session) => setGate(!session.enabled ? "disabled" : session.authenticated ? "ready" : "locked"))
-      .catch((error) => { setProbeError(adminErrorLabel(error)); setGate("disabled"); });
+      .catch((error: unknown) => {
+        // 只有后端自己点名「未启用」的 503 才进 disabled 闭集文案；其余失败一律 unreachable。
+        // 判据用 code + status 两个条件，缺一条都可能把网关错误读成"你没配 ADMIN_TOKEN"。
+        if (error instanceof ApiError && error.status === 503 && error.code === "admin_disabled") {
+          setProbeError(adminErrorLabel(error));
+          setGate("disabled");
+        } else {
+          setProbeError(probeDetail(error));
+          setGate("unreachable");
+        }
+      });
   }, []);
   useEffect(probe, [probe]);
 
@@ -41,11 +60,20 @@ export function AdminShell({ title, path = "", children }: {
         ))}
       </nav>
       <div data-testid="admin-shell" className="mt-4">
-        {gate === "unknown" && <p role="status" className="text-sm text-ink/70">检查管理端状态…</p>}
+        {gate === "checking" && <p role="status" className="text-sm text-ink/70">检查管理端状态…</p>}
         {gate === "disabled" && (
           <p role="alert" className="rounded border border-cinnabar/40 bg-cinnabar/5 p-3 text-sm text-cinnabar">
             {probeError || "管理端未启用：请设置 ADMIN_TOKEN（至少 16 字符）"}
           </p>
+        )}
+        {gate === "unreachable" && (
+          <div role="alert" className="rounded border border-cinnabar/40 bg-cinnabar/5 p-3">
+            <p className="text-sm text-cinnabar">管理端暂时连不上：{probeError}</p>
+            <button type="button" onClick={probe}
+              className="mt-2 rounded bg-cinnabar px-3 py-1 text-sm text-paper">
+              重试
+            </button>
+          </div>
         )}
         {gate === "locked" && <LoginCard onSignedIn={probe} />}
         {gate === "ready" && children}

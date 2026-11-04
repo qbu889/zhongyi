@@ -23,6 +23,14 @@ export interface HerbDiffRow {
   formula: string; pair_id: number;
   missing_in_gram: string[]; missing_in_ancient: string[];
 }
+/** 三键齐全**只**由 `verify.py:98-99`（`_dose_deviations`）这一条生成路径保证：那里先有
+ * `if item.dose_g is None: continue` 与 `if not gram_g: continue` 两道过滤，落库的 dict 恒为
+ * 三键且非空；`loaders.py:232/236` 原样搬运 `p.dose_dev`，没有第二个写者。后端读它时用
+ * `.get(..., "")`（`admin.py:405-406` 的 CSV 单元格）和 `.get(..., 0)`（`quality.py:75` 的
+ * `worst_pct` 取最大值），那是"缺键不把端点炸成 500"的兜底，不是对键可缺席的背书。
+ * 非该路径写入的行（手工改库、将来的新写者）不受这条保证保护。
+ * 选择保持必填而非改可选：消费端（T12 的三列数字与 `worst_pct` 排序）拿到 `undefined` 也只能
+ * 渲染成空白单元格，与异常数据现在的表现相同，却等于把"后端不认自己的契约"写进类型层。 */
 export interface DoseDeviationEntry { ancient_g: number; gram_g: number; deviation_pct: number }
 export interface DoseDeviationRow {
   formula: string; pair_id: number;
@@ -114,7 +122,15 @@ export interface LogItem {
 export interface LogList { total: number; limit: number; offset: number; items: LogItem[] }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { cache: "no-store", ...init });
+  const res = await fetch(path, {
+    cache: "no-store",
+    ...init,
+    // 凭据策略写死在展开之后：规格 §13-10 唯一的 CSRF 边界是 `SameSite=Lax` + 全部写操作走
+    // POST，而这条边界只在 cookie 真的随同源请求送达时才成立。它不该只活在 fetch 的隐式默认
+    // 里，也不该由某个调用方的 init 悄悄降级成 omit/include。行为与改前一致（默认本就是
+    // same-origin，当前没有任何调用方传 credentials）。
+    credentials: "same-origin",
+  });
   if (res.status === 204) return undefined as T;
   if (!res.ok) throw await parseApiError(res);
   return (await res.json()) as T;
@@ -150,7 +166,13 @@ export function adminErrorLabel(error: unknown): string {
     ? ADMIN_ERROR_LABELS[error.code] ?? error.message
     : "请求失败";
 }
-export type AdminGate = "disabled" | "locked" | "ready" | "unknown";
+/** 门状态五值（规格 §3 的「未启用 / 未登录 / 加载失败」必须是三条独立文案，不合并）：
+ * `checking` 探针在途；`unreachable` 探针失败且**不是** 503 admin_disabled（后端挂了、502、
+ * 断网、非 JSON 响应体）——可重试、fail-closed；`disabled` 探针成功但 `enabled:false`，
+ * 或后端点名的 503 `admin_disabled`；`locked` 已启用未登录；`ready` 已登录。
+ * `unreachable` 与 `disabled` 的分界是本轮的实质：把两者合并会让维护者去查 `ADMIN_TOKEN`，
+ * 而真正坏的是后端进程。 */
+export type AdminGate = "checking" | "unreachable" | "disabled" | "locked" | "ready";
 
 /** GET /pending 的两条通道（admin.py list_pending：缺省 decision 只回 decision=pending 的
  * 队列行，显式空串是唯一的"全量"通道）。拆成两个常量而不是让调用方裸拼 `?decision=`，
