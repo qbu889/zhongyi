@@ -107,7 +107,11 @@ export function PendingTable({ items, total, onChanged }: {
             const decided = row.decision !== "pending";
             return (
               <Fragment key={row.id}>
-                <tr className="border-b border-line/60 align-top">
+                {/* `data-testid="pending-row"`：主行（候选名+判定单元所在的 <tr>）的稳定 e2e 钩子。
+                  * 已判定行在本表渲染成**两个** <tr>（主行 + colSpan=7 留痕行），"任意 row 含候选名"
+                  * 这一类定位把断言绑死在两行文本的拼接形状上；主行 testid 让端到端断言只锚主行。
+                  * 纯测试钩子，不是样式类，也不参与任何可访问名/列数。 */}
+                <tr className="border-b border-line/60 align-top" data-testid="pending-row">
                   <td className="py-1 pr-2">{row.raw_name}</td>
                   {/* 合成格：可整段选中（select-all）+ 复制按钮；**不是链接**——浏览器打不开
                     * 服务器本地文件、语料 0600，做成跳转是超出证据的承诺（§13-8）。 */}

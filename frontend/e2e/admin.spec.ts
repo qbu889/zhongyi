@@ -205,11 +205,14 @@ test("重建 preview 到确认：hash 未变时明确报告无需重建", async 
 /** 队列内容定位选行（M4 教训：不依赖列表顺序）：在 pending 视图里找一个
  * `raw_name` 不与任何现存方名重名、且在表内唯一命中该行的候选。
  * avoidNames 用于防串扰：重名候选归并后会改变别的用例看到的精确命中集合。
+ * 行集锚在 `data-testid="pending-row"`（PendingTable 的主行 <tr>）上而不是"任意 <tr>"：
+ * 已判定行渲染主行+colSpan 留痕行两个 <tr>，"row 含文本"的定位把命中集合绑死在两行
+ * 文本的拼接形状上——修复轮 2 起全文件不再用 `getByRole("row")` 判别候选行。
  * 注意 `filter({ has })` 的内层 locator 必须以 page 为根（实测 1.64.1：以 table
  * 为根的 has 恒 0 命中——has 在候选行内部再解一次，外层 base 与它无关）。 */
 async function pickPendingCandidate(table: Locator, page: Page, avoidNames: Set<string>) {
   const actionable = table
-    .getByRole("row")
+    .getByTestId("pending-row")
     .filter({ has: page.getByRole("button", { name: "归并到既有方" }) });
   const count = await actionable.count();
   expect(count, "候选队列 pending 视图应有可操作行").toBeGreaterThan(0);
@@ -278,14 +281,31 @@ test("归并即时生效：审核后的别名能在四大库检索里精确命�
   expect(decision.item.decision).toBe("merged");
   expect(decision.item.decided_by).toBe("admin");
   expect(decision.alias_created, "新候选第一次归并应真的插入别名行").toBe(true);
-  // 队列刷新：该候选离开 pending 视图（默认筛选下不再出现）。
+  // 队列刷新：该候选离开 pending 视图（默认筛选下不再出现）。锚主行 testid。
   await expect(
-    table.getByRole("row").filter({ hasText: candidate }),
+    table.getByTestId("pending-row").filter({ hasText: candidate }),
   ).toHaveCount(0);
+  // —— 修复轮 2：切筛选前先让 onChanged 触发的这次重载【落地】——
+  // 根因（确定性复现与逐毫秒时间线见 task-15-report.md 修复轮 2）：onChanged → page.tsx 的
+  // nonce 重载里 load() 先 setData(null)——PendingTable 整棵卸载，上面 toHaveCount(0) 会在
+  // 这个"零行"窗口假过；随后那条 GET decision=pending（队列全量、limit 200）是在途请求。
+  // 不等它落地就 selectOption，就会有两张列表交叠：merged 筛选的小响应常先落地渲染出已判定行，
+  // 旧的 pending 大响应再晚十几毫秒 `.then(setData)` 把表体覆盖回 pending 队列——筛选框停在
+  // merged、屏上却是 pending 视图，且已判定行从此消失。已判定行的可见窗口若落在断言轮询
+  // 间隙里（本机冷跑实测轮询 ~2 次/秒），merged 断言就恒 0 直到超时——这正是 #35 间歇翻红、
+  // 而 POST 响应断言全过的原因。
+  // 等待形状为什么充分：上面 toHaveCount(0) 只能在「旧 pending DOM 已卸载」之后才过
+  // （未卸载时候选主行还在，count=1 过不了）；卸载后到本行通过之间，表体重新可见
+  // **只可能**由那条在途 GET 的 .then(setData) 造成（骨架期 data==null、pending-table
+  // 根本不在 DOM）。两条合起来 ⇒ 此刻无在途列表请求，selectOption 只会发出唯一一条
+  // merged GET，不存在被旧结果覆盖的窗口。证明内容一条没少，改的只是等待与定位。
+  await expect(table).toBeVisible();
 
   // 已判定状态在"已归并（merged）"筛选下持久可见：判定列 merged + 次级留痕行。
+  // 定位不再依赖"两行怎么拆、哪行含文本"：主行 testid + 候选名唯一锚定主行本身，
+  // 留痕行（colSpan=7）另行独立断言存在。
   await page.getByRole("combobox", { name: "按判定筛选" }).selectOption("merged");
-  const decidedRow = table.getByRole("row").filter({ hasText: candidate });
+  const decidedRow = table.getByTestId("pending-row").filter({ hasText: candidate });
   await expect(decidedRow).toHaveCount(1);
   await expect(decidedRow).toContainText("merged");
   await expect(table.getByText("判定留痕：")).not.toHaveCount(0);
