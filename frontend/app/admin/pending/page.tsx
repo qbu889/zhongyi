@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AdminShell, useAdminReauth } from "@/components/admin/AdminShell";
 import { PendingTable } from "@/components/admin/PendingTable";
@@ -34,7 +34,21 @@ function PendingBody() {
   const [data, setData] = useState<PendingList | null>(null);
   const [error, setError] = useState("");
   const [nonce, setNonce] = useState(0);
+  /** 修复轮 3：陈旧响应守卫（自增序号制，不选 AbortController——理由记在 task-15-report.md「修复轮 3」）。
+   *
+   * 缺陷本体：`load()` 每次先 `setData(null)`（收起上一屏的行），PendingTable 随之整棵卸载，而上一张
+   * 列表的 GET 还在途。真实网络下那条旧 GET（`decision=pending` 全量 63 行、limit=200）常常比新筛选的
+   * 小响应**晚 15–21ms** 落地，`.then(setData)` 不分先后、后到者赢 ⇒ 筛选框停在「已归并」、屏上却是
+   * 待审队列，且这个覆盖是持久的（e2e #35「归并即时生效」间歇翻红的根因即此）。维护者看到的就是
+   * "数据不见了"，所以这是产品缺陷，不该由 e2e 的等待策略长期掩盖。
+   *
+   * 修法：发出请求前取一个自增序号，响应落地（成功或失败）时先比对"这还是最新那次请求吗"，
+   * 不是就整条丢弃。两个入口——筛选变更（decision/reason → 新的 load）与 `onChanged()` 触发的
+   * nonce 重取——都汇聚到本函数，所以一处守卫同时管住。
+   * 不用 `setTimeout`/固定延时去"等旧请求过去"：那只是把一种竞态换成另一种竞态。 */
+  const generation = useRef(0);
   const load = useCallback(() => {
+    const current = ++generation.current;
     setError("");
     // 换筛选/重新加载时先收起上一屏的行：加载中、失败、空、有数据是四面，不同时出现。
     setData(null);
@@ -45,8 +59,13 @@ function PendingBody() {
     // 缺省 limit=50 时「请用筛选缩小范围」是给不到剩余行的建议；真超过 200 时的分页 UI 登记 T16。
     params.set("limit", "200");
     adminGet<PendingList>(`${PENDING_PATH}?${params.toString()}`)
-      .then(setData)
+      .then((payload) => {
+        // 陈旧响应丢弃：晚到的旧筛选结果不许覆盖最新一次的视图。
+        if (current !== generation.current) return;
+        setData(payload);
+      })
       .catch((caught: unknown) => {
+        if (current !== generation.current) return;
         // 指针 §1/§4：数据端点 401 = 会话过期，交回 AdminShell 重新探针，不查标签表。
         if (isAdminUnauthorized(caught)) { reprobe(); return; }
         setError(adminErrorLabel(caught));

@@ -285,20 +285,15 @@ test("归并即时生效：审核后的别名能在四大库检索里精确命�
   await expect(
     table.getByTestId("pending-row").filter({ hasText: candidate }),
   ).toHaveCount(0);
-  // —— 修复轮 2：切筛选前先让 onChanged 触发的这次重载【落地】——
-  // 根因（确定性复现与逐毫秒时间线见 task-15-report.md 修复轮 2）：onChanged → page.tsx 的
-  // nonce 重载里 load() 先 setData(null)——PendingTable 整棵卸载，上面 toHaveCount(0) 会在
-  // 这个"零行"窗口假过；随后那条 GET decision=pending（队列全量、limit 200）是在途请求。
-  // 不等它落地就 selectOption，就会有两张列表交叠：merged 筛选的小响应常先落地渲染出已判定行，
-  // 旧的 pending 大响应再晚十几毫秒 `.then(setData)` 把表体覆盖回 pending 队列——筛选框停在
-  // merged、屏上却是 pending 视图，且已判定行从此消失。已判定行的可见窗口若落在断言轮询
-  // 间隙里（本机冷跑实测轮询 ~2 次/秒），merged 断言就恒 0 直到超时——这正是 #35 间歇翻红、
-  // 而 POST 响应断言全过的原因。
-  // 等待形状为什么充分：上面 toHaveCount(0) 只能在「旧 pending DOM 已卸载」之后才过
-  // （未卸载时候选主行还在，count=1 过不了）；卸载后到本行通过之间，表体重新可见
-  // **只可能**由那条在途 GET 的 .then(setData) 造成（骨架期 data==null、pending-table
-  // 根本不在 DOM）。两条合起来 ⇒ 此刻无在途列表请求，selectOption 只会发出唯一一条
-  // merged GET，不存在被旧结果覆盖的窗口。证明内容一条没少，改的只是等待与定位。
+  // —— 修复轮 2 加的 settle-wait，修复轮 3 之后它的职责要说清（别让下一位读者以为缺了它就红）——
+  // 它现在等的是**网络往返**：onChanged → page.tsx 的 nonce 重载发出去的那条 GET decision=pending
+  // 真的落地、表体重新渲染出来，于是上面的 toHaveCount(0) 是在"重载后的数据"上验证的，
+  // 而不是在 setData(null) 造成的整棵卸载"零行"窗口里假过（那一窗口里候选主行本来就不在 DOM）。
+  // 它**不再**是用来绕开"旧响应覆盖新筛选"的：那个产品缺陷已在修复轮 3 于 page.tsx 里用
+  // 自增序号的陈旧响应守卫堵死（晚到的旧筛选结果整条丢弃），并由
+  // tests/unit/admin-pending.test.tsx「陈旧响应守卫」一条确定性单测钉住（去掉守卫必翻红）。
+  // 也就是说：即使删掉本行，merged 视图也不会再被旧 pending 列表覆盖——本行保留的理由是上面那句
+  // "让离场断言不可假过"，属于正当的稳健化，不是掩盖。根因时间线见 task-15-report.md 修复轮 2/3。
   await expect(table).toBeVisible();
 
   // 已判定状态在"已归并（merged）"筛选下持久可见：判定列 merged + 次级留痕行。

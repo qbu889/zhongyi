@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,6 +33,17 @@ const decisionResponse = (patch: Partial<PendingItem>, aliasCreated: boolean | n
 });
 /** 登录门常量：页级用例走 AdminShell，必须先把探针装成已登录。 */
 const signedIn = () => HttpResponse.json({ enabled: true, authenticated: true, expires_at: 1 });
+
+/** 把"在途的那条迟到响应"推到终点再断言：轮转宏任务队列（0 延时，不等满任何 N 毫秒）并把
+ * React 的工作队列排空，直到迟到那条**要么已落进视图、要么被守卫丢弃**，不留"它还没跑到"的第三种解释。
+ * 它只负责测试侧的排空，不承担守卫职责（守卫是 page.tsx 的序号比对）；本仓库两次否决假定时器，这里也没有引入。 */
+async function flushInFlightWork() {
+  for (let round = 0; round < 4; round += 1) {
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
 
 beforeEach(() => {
   // Vitest 5：简写箭头体的 beforeEach 会被当成 teardown，必须用块体（同 admin-panels.test）。
@@ -620,5 +631,68 @@ describe("候选方名审核页", () => {
     expect(await screen.findByRole("textbox", { name: "管理端口令" })).toBeInTheDocument();
     expect(screen.queryByText("口令不正确")).not.toBeInTheDocument();
     expect(screen.queryByText(/队列加载失败/)).not.toBeInTheDocument();
+  });
+
+  /* 修复轮 3（产品侧竞态）：`load()` 没有请求顺序/取消守卫时，先发的 `GET ?decision=pending`
+   * 会晚于后发的 `GET ?decision=merged` 落地，把已经切过去的筛选视图**持久**覆盖回待审队列
+   * （e2e `#35 归并即时生效` 间歇翻红的根因，毫秒级时间线见 task-15-report.md 修复轮 2）。
+   * 本用例把那个时序做成确定性的：两条 handler 各持一只 promise，先放后发的 merged、再放先发的
+   * pending——完全由测试手里的 promise 驱动，不用 timer、不用固定延时。
+   * 这条必须"没有守卫就翻红"：临时删掉 page.tsx 的序号守卫时，终态断言实际失败输出见报告。 */
+  it("陈旧响应守卫：先发后到的 pending 列表不许覆盖已切换的 merged 视图", async () => {
+    const user = userEvent.setup();
+    // 两条筛选各返回**只有 own 一行**的队列，让"屏上是哪张列表"可由候选名逐字判别。
+    const mergedRow: PendingItem = {
+      ...item, id: 2, raw_name: "乙", decision: "merged",
+      decided_by: "admin", decided_at: "2026-01-02T03:04:05Z", decided_name: null,
+    };
+    const urls: string[] = [];
+    let releaseStale!: () => void;   // 第一条（pending）：故意让它后落地
+    let releaseFresh!: () => void;   // 第二条（merged）：故意让它先落地
+    const staleGate = new Promise<void>((resolve) => { releaseStale = resolve; });
+    const freshGate = new Promise<void>((resolve) => { releaseFresh = resolve; });
+    /** 旧响应是否已经交还给客户端——用来证明这条用例真的把竞态跑到了，而不是空跑。 */
+    let staleDelivered = false;
+    server.use(
+      http.get("/api/admin/session", signedIn),
+      http.get("/api/admin/pending", async ({ request }) => {
+        const decision = new URL(request.url).searchParams.get("decision");
+        urls.push(decision ?? "");
+        if (decision === "pending") {
+          await staleGate;
+          staleDelivered = true;
+          return HttpResponse.json({ ...list, items: [item] });
+        }
+        await freshGate;
+        return HttpResponse.json({ ...list, items: [mergedRow] });
+      }),
+    );
+
+    render(<AdminPendingPage />);
+    await waitFor(() => expect(urls).toEqual(["pending"]));
+    // 旧请求还在途时切筛选：这就是 `setData(null)` 卸载 PendingTable、两条 GET 交叠的窗口。
+    await user.selectOptions(screen.getByRole("combobox", { name: "按判定筛选" }), "merged");
+    await waitFor(() => expect(urls).toEqual(["pending", "merged"]));
+
+    // 后发的 merged 先落地 → 视图必须是 merged 筛选的数据。
+    releaseFresh();
+    expect(await screen.findByText("乙")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "merged" })).toBeInTheDocument();
+    expect(screen.queryByText("甲")).not.toBeInTheDocument();
+
+    // 先发的 pending 现在才落地（真实网络里那 15–21ms 的迟到窗口）。守卫必须整条丢弃它。
+    releaseStale();
+    await waitFor(() => expect(staleDelivered).toBe(true));
+    await flushInFlightWork();
+
+    // 终态三钉：视图仍是最后一次请求的筛选结果、没有闪回 pending 行、筛选框与视图不矛盾。
+    expect(screen.getByText("乙")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "merged" })).toBeInTheDocument();
+    expect(screen.queryByText("甲")).not.toBeInTheDocument();
+    expect(screen.queryByRole("cell", { name: "pending" })).not.toBeInTheDocument();
+    expect(screen.queryByText("读取候选队列…")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "按判定筛选" })).toHaveValue("merged");
+    // 竞态真的发生过（两条列表请求、旧的确实后落地），且守卫只是丢弃，不额外重发请求。
+    expect(urls).toEqual(["pending", "merged"]);
   });
 });
