@@ -4,8 +4,10 @@ import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import AdminOverviewPage from "@/app/admin/page";
+import AdminLogsPage from "@/app/admin/logs/page";
 import AdminQualityPage from "@/app/admin/quality/page";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { LogsDashboard } from "@/components/admin/LogsDashboard";
 import { QualitySection } from "@/components/admin/QualitySection";
 import { ReindexPanel } from "@/components/admin/ReindexPanel";
 import { VersionTable } from "@/components/admin/VersionTable";
@@ -599,5 +601,135 @@ describe("质量报告页", () => {
     expect(await screen.findByRole("textbox", { name: "管理端口令" })).toBeInTheDocument();
     expect(screen.queryByText("口令不正确")).not.toBeInTheDocument();
     expect(screen.queryByText(/报告加载失败/)).not.toBeInTheDocument();
+  });
+});
+
+describe("LogsDashboard", () => {
+  it("四卡/窗口/limit 全部取响应值：queries_total 与明细条数故意不等、window_days 不是写死的 7", async () => {
+    server.use(
+      // queries_total=999 而明细只有 1 条：若组件自数条数会渲染成 1，指针 §2 要的就是这条判别。
+      http.get("/api/admin/logs/summary", () => HttpResponse.json(
+        { queries_total: 999, queries_recent: 5, refusal_rate: 0.6, avg_hit_count: 3.8, window_days: 30 })),
+      // RefusalList 顶层带 window_days/limit（指针 §3），内联 {items} 会丢掉这俩回显。
+      http.get("/api/admin/logs/refusals", () => HttpResponse.json(
+        { window_days: 30, limit: 10, items: [{ query: "量子针灸", count: 2, top_score_max: 0.281 }] })),
+      http.get("/api/admin/logs", () => HttpResponse.json({
+        total: 5, limit: 25, offset: 0,
+        items: [{ id: 1, created_at: "2026-11-02T00:00:00", session_id: null,
+          query: "桂枝汤", intent: "B", refused: false, top_score: 1, hit_count: 10 }] })),
+    );
+    render(<LogsDashboard />);
+    const dash = screen.getByTestId("logs-dashboard");
+    // wrapper 首帧即渲染，testid 只能证存在； awaited 到数据驱动的卡片才算加载完成。
+    expect(dash).toBeInTheDocument();
+    await within(dash).findByText("累计提问");
+    // 累计提问卡渲染的是响应 999，不是明细条数 1（看板不自我印证——规格 §8）。
+    expect(within(dash).getByText("累计提问").closest("li")).toHaveTextContent("999");
+    expect(within(dash).getByText("平均命中").closest("li")).toHaveTextContent("3.8");
+    expect(within(dash).getByText("拒答率").closest("li")).toHaveTextContent("60%");
+    // 窗口取响应 window_days=30，不是硬编码 7。
+    expect(within(dash).getByText("近 30 日")).toBeInTheDocument();
+    expect(within(dash).queryByText("近 7 日")).not.toBeInTheDocument();
+    // limit 取明细响应回显的 25，不是写死的 50。
+    expect(within(dash).getByText(/最近 25 条/)).toBeInTheDocument();
+    expect(within(dash).queryByText(/最近 50 条/)).not.toBeInTheDocument();
+    // 拒答榜窗口/limit 来自 RefusalList 回显——证明用的是 RefusalList 而非内联 {items}。
+    expect(within(dash).getByText(/近 30 日 · 前 10 名/)).toBeInTheDocument();
+    // 拒答榜按原文渲染（不归一化：错字/繁简归一是 E3 未决，规格 §8）。
+    await within(dash).findByText("量子针灸");
+    expect(within(dash).getByText("0.281")).toBeInTheDocument();
+    // 隐私提示行（§8）。
+    expect(within(dash).getByText(/日志含用户主诉原文/)).toBeInTheDocument();
+  });
+
+  it("非零拒答率不被四舍五入成 0%（诚实播报）", async () => {
+    server.use(
+      http.get("/api/admin/logs/summary", () => HttpResponse.json(
+        { queries_total: 200, queries_recent: 100, refusal_rate: 0.004, avg_hit_count: 0, window_days: 7 })),
+      http.get("/api/admin/logs/refusals", () => HttpResponse.json({ window_days: 7, limit: 50, items: [] })),
+      http.get("/api/admin/logs", () => HttpResponse.json({ total: 0, limit: 50, offset: 0, items: [] })),
+    );
+    render(<LogsDashboard />);
+    const dash = screen.getByTestId("logs-dashboard");
+    await within(dash).findByText("拒答率");
+    const rateCard = within(dash).getByText("拒答率").closest("li");
+    expect(rateCard).toHaveTextContent("<1%");
+    expect(rateCard).not.toHaveTextContent("0%");
+  });
+
+  it("意图筛选改的是请求参数，不是本地过滤", async () => {
+    const user = userEvent.setup();
+    const urls: string[] = [];
+    server.use(
+      http.get("/api/admin/logs/summary", () => HttpResponse.json(
+        { queries_total: 1, queries_recent: 1, refusal_rate: 0, avg_hit_count: 0, window_days: 7 })),
+      http.get("/api/admin/logs/refusals", () => HttpResponse.json({ window_days: 7, limit: 50, items: [] })),
+      http.get("/api/admin/logs", ({ request }) => {
+        urls.push(request.url);
+        return HttpResponse.json({ total: 0, limit: 50, offset: 0, items: [] });
+      }),
+    );
+    render(<LogsDashboard />);
+    await screen.findByTestId("logs-dashboard");
+    await user.selectOptions(screen.getByRole("combobox", { name: "按意图筛选" }), "F");
+    await waitFor(() => expect(urls.at(-1)).toContain("intent=F"));
+  });
+
+  it("空数据：明细与拒答榜都空时给诚实空态，且不是失败文案（正向两条独立面）", async () => {
+    server.use(
+      http.get("/api/admin/logs/summary", () => HttpResponse.json(
+        { queries_total: 0, queries_recent: 0, refusal_rate: 0, avg_hit_count: 0, window_days: 7 })),
+      http.get("/api/admin/logs/refusals", () => HttpResponse.json({ window_days: 7, limit: 50, items: [] })),
+      http.get("/api/admin/logs", () => HttpResponse.json({ total: 0, limit: 50, offset: 0, items: [] })),
+    );
+    render(<LogsDashboard />);
+    const dash = screen.getByTestId("logs-dashboard");
+    expect(await within(dash).findByText("本库暂无问答日志。")).toBeInTheDocument();
+    expect(within(dash).getByText("窗口内没有拒答记录。")).toBeInTheDocument();
+    expect(within(dash).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(dash).queryByText(/日志加载失败/)).not.toBeInTheDocument();
+  });
+
+  it("加载失败（500）：失败文案与重试按钮存在，绝不静默成空看板（正向）", async () => {
+    const user = userEvent.setup();
+    let requests = 0;
+    server.use(
+      http.get("/api/admin/logs/summary", () => {
+        requests += 1;
+        return new HttpResponse("Internal Server Error", { status: 500 });
+      }),
+      http.get("/api/admin/logs/refusals", () => HttpResponse.json({ window_days: 7, limit: 50, items: [] })),
+      http.get("/api/admin/logs", () => HttpResponse.json({ total: 0, limit: 50, offset: 0, items: [] })),
+    );
+    render(<LogsDashboard />);
+    const dash = screen.getByTestId("logs-dashboard");
+    const alert = await within(dash).findByRole("alert");
+    expect(alert).toHaveTextContent("日志加载失败：HTTP 500");
+    expect(within(alert).getByRole("button", { name: "重试" })).toBeInTheDocument();
+    await user.click(within(alert).getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(requests).toBe(2));
+  });
+});
+
+describe("问答日志页", () => {
+  it("logs 端点 401：交回 AdminShell 重新探针，不查标签表也不显示加载失败", async () => {
+    let probes = 0;
+    const unauthorized = () => HttpResponse.json(
+      { detail: { code: "admin_unauthorized", message: "请先登录管理端" } }, { status: 401 });
+    server.use(
+      http.get("/api/admin/session", () => {
+        probes += 1;
+        return HttpResponse.json(
+          { enabled: true, authenticated: probes < 2, expires_at: probes < 2 ? 1 : null });
+      }),
+      http.get("/api/admin/logs/summary", unauthorized),
+      http.get("/api/admin/logs/refusals", unauthorized),
+      http.get("/api/admin/logs", unauthorized),
+    );
+    render(<AdminLogsPage />);
+    await waitFor(() => expect(probes).toBe(2));
+    expect(await screen.findByRole("textbox", { name: "管理端口令" })).toBeInTheDocument();
+    expect(screen.queryByText("口令不正确")).not.toBeInTheDocument();
+    expect(screen.queryByText(/日志加载失败/)).not.toBeInTheDocument();
   });
 });
