@@ -74,6 +74,11 @@ def test_pending_decision_is_not_overwritten_by_reindex(db_session, corpus):
     db_session.flush()
 
     _load(db_session, corpus)
+    # `expire_all` 是这条断言成立的前提，不是修饰：`session.get()` 命中身份图时直接返回
+    # 内存里那个对象、根本不查库，所以少了这一行，哪怕第二次 load 真把 decision 抹回
+    # pending，断言照样绿（就是 R-M5-7 的失效模式）。实测证据：给 pending 的 DO UPDATE
+    # 集合加上 `decision` 后，只有 expire 过的版本会翻红。
+    db_session.expire_all()
     after = db_session.get(PendingFormulaName, row.id)
     assert after.decision == "confirmed_new" and after.decided_by == "linziwang"
 
