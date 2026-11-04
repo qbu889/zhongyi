@@ -4,11 +4,13 @@ import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import AdminOverviewPage from "@/app/admin/page";
+import AdminQualityPage from "@/app/admin/quality/page";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { QualitySection } from "@/components/admin/QualitySection";
 import { ReindexPanel } from "@/components/admin/ReindexPanel";
 import { VersionTable } from "@/components/admin/VersionTable";
 import type {
-  IndexVersionInfo, IndexVersions, ReindexPreview, ReindexReport,
+  IndexVersionInfo, IndexVersions, QualityReport, ReindexPreview, ReindexReport,
 } from "@/lib/admin";
 
 import { server } from "../msw/server";
@@ -53,6 +55,37 @@ const freshReport: ReindexReport = {
   ...reusedReport, reused: false, version_id: 8, chunks: 1822, elapsed_ms: 1634,
   counts: { formula: 424, herb: 379, acupoint: 346, case: 30 },
   skipped: { pair_missing_variant: 4 },
+};
+
+/** 质量报告夹具：类型一律用 lib/admin.ts（T10 逐键对后端核过）。七个数据面各给≥1行，
+ * 保证成功用例里七张 `<table>` 都在（QualitySection 空 rows 走空态、不出表）。 */
+const qualityReport: QualityReport = {
+  index_version: { id: 7, status: "ready" },
+  herb_diff: [{ formula: "五苓散", pair_id: 1, missing_in_gram: ["猪苓"], missing_in_ancient: ["泽泻"] }],
+  dose_deviation: [{
+    formula: "麻黄汤", pair_id: 2, worst_pct: 650,
+    items: { 麻黄: { ancient_g: 4, gram_g: 30, deviation_pct: 650 } },
+  }],
+  parse_failures: [{ reason: "multi_name_row", count: 3 }],
+  parse_failure_details: [{
+    raw_name: "甲", doc: "03-金匮/方剂库.md", source_row_no: 12, reason: "multi_name_row", decision: "pending",
+  }],
+  annotation_items: [{ herb_text: "（洗）", variant_id: 3, formula_item_id: 4 }],
+  dangling_herbs: { rows: 5, distinct_terms: 2, top: [["桂枝", 3], ["麻黄", 2]] },
+  dose_state_distribution: { exact: 1, approx: 2, count_only: 0, absent: 0, unknown_unit: 0 },
+  pending_queue: { total: 64, by_decision: { pending: 64 }, by_reason: { no_formula_name: 57 } },
+  counters: {
+    herb_total: 379, herb_without_taste: 0, herb_without_flavor: 0,
+    formula_total: 423, variant_gram: 200, variant_ancient: 200, item_total: 900,
+  },
+};
+/** 空报告：四个行清单为空、三个聚合视图为空——每条空态断言的对照面。 */
+const emptyQualityReport: QualityReport = {
+  ...qualityReport,
+  herb_diff: [], dose_deviation: [], parse_failure_details: [], annotation_items: [],
+  dangling_herbs: { rows: 0, distinct_terms: 0, top: [] },
+  dose_state_distribution: {},
+  pending_queue: { total: 0, by_decision: {}, by_reason: {} },
 };
 
 /** F-A 的两行逐字文案。这里刻意再写一遍字面量而不是从组件导入常量：
@@ -418,5 +451,153 @@ describe("管理端概览页", () => {
     render(<AdminOverviewPage />);
     expect(await screen.findByTestId("version-table")).toHaveTextContent("1818");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("QualitySection", () => {
+  it("caption 即节标题、作为表格可访问名；表头数与单元格数相等", () => {
+    render(<QualitySection id="herb_diff" title="① 药材差异"
+      headers={["方名", "仅古制有", "仅克数本有"]}
+      rows={[["五苓散", "猪苓", ""]]} exportList="herb_diff" />);
+    const table = screen.getByRole("table");
+    // 指针 §4：caption 就是节标题，不附加"不二次计算"之类后缀（否则可访问名对不上）。
+    expect(table).toHaveAccessibleName("① 药材差异");
+    expect(within(table).getByRole("columnheader", { name: "方名" })).toBeInTheDocument();
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(3);
+    expect(within(table).getAllByRole("cell")).toHaveLength(3);
+  });
+
+  it("可导出的节给 CSV 链接，href 来自 adminCsvHref（不手写 ?list=）", () => {
+    render(<QualitySection id="herb_diff" title="① 药材差异"
+      headers={["方名"]} rows={[["五苓散"]]} exportList="herb_diff" />);
+    expect(screen.getByRole("link", { name: "导出 CSV" }))
+      .toHaveAttribute("href", "/api/admin/quality-report/export?list=herb_diff");
+  });
+
+  it("不可导出的聚合节不显示导出链接", () => {
+    render(<QualitySection id="pending_queue" title="⑦ 待确认方名候选队列"
+      headers={["维度", "取值", "数量"]} rows={[["判定", "pending", "64"]]} />);
+    expect(screen.queryByRole("link", { name: "导出 CSV" })).not.toBeInTheDocument();
+  });
+
+  it("空数据给诚实的「本库暂无」，且不渲染成失败面", () => {
+    render(<QualitySection id="herb_diff" title="① 药材差异"
+      headers={["方名"]} rows={[]} exportList="herb_diff" />);
+    expect(screen.getByText("本库暂无记录。")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("源文件#行号合成一格：列数仍等于表头、复制的是路径本身、且不是链接", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<QualitySection id="parse_failure_details" title="③ 解析失败明细"
+      headers={["候选方名", "源文件#行号", "原因", "判定"]} pathColumn={1}
+      rows={[["甲", "03-金匮/方剂库.md", "12", "multi_name_row", "pending"]]}
+      exportList="parse_failure_details" />);
+    const table = screen.getByRole("table");
+    // R-M5-2：源行号被并进路径格，不出第五列——表头 4、单元格 4，相等才不被 axe 判死。
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(4);
+    expect(within(table).getAllByRole("cell")).toHaveLength(4);
+    expect(within(table).getByText("03-金匮/方剂库.md#12")).toBeInTheDocument();
+    // §13-8：降级为"显示路径 + 行号 + 可复制"，绝不做成跳源文件的链接。
+    expect(within(table).queryByRole("link", { name: /方剂库/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "复制源文件路径" }));
+    expect(writeText).toHaveBeenCalledWith("03-金匮/方剂库.md#12");
+    expect(await screen.findByRole("status")).toHaveTextContent("已复制源路径");
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("质量报告页", () => {
+  it("成功渲染七张表：恰好四张带 CSV 导出、三张聚合不带", async () => {
+    server.use(
+      http.get("/api/admin/session", () => HttpResponse.json(
+        { enabled: true, authenticated: true, expires_at: 1 })),
+      http.get("/api/admin/quality-report", () => HttpResponse.json(qualityReport)),
+    );
+    render(<AdminQualityPage />);
+    await screen.findByTestId("quality-report");
+    expect(screen.getAllByRole("table")).toHaveLength(7);
+    const exportLinks = screen.getAllByRole("link", { name: "导出 CSV" });
+    // 规格 §4.1：只有 herb_diff / dose_deviation / parse_failure_details / annotation_items 可导。
+    expect(exportLinks).toHaveLength(4);
+    const hrefs = exportLinks.map((link) => link.getAttribute("href"));
+    expect(new Set(hrefs)).toEqual(new Set([
+      "/api/admin/quality-report/export?list=herb_diff",
+      "/api/admin/quality-report/export?list=dose_deviation",
+      "/api/admin/quality-report/export?list=parse_failure_details",
+      "/api/admin/quality-report/export?list=annotation_items",
+    ]));
+    // 三张聚合视图（⑤⑥⑦）不给导出——伪列名的下载不在本页承诺内。
+    expect(hrefs).not.toContain("/api/admin/quality-report/export?list=dangling_herbs");
+    expect(hrefs).not.toContain("/api/admin/quality-report/export?list=pending_queue");
+  });
+
+  it("② 剂量偏差三键必填照渲染（不降级成占位符 —）", async () => {
+    server.use(
+      http.get("/api/admin/session", () => HttpResponse.json(
+        { enabled: true, authenticated: true, expires_at: 1 })),
+      http.get("/api/admin/quality-report", () => HttpResponse.json(qualityReport)),
+    );
+    render(<AdminQualityPage />);
+    await screen.findByTestId("quality-report");
+    const table = screen.getByRole("table", { name: "② 剂量偏差>50%" });
+    expect(within(table).getByRole("cell", { name: "麻黄" })).toBeInTheDocument();
+    expect(within(table).getByRole("cell", { name: "4" })).toBeInTheDocument();
+    expect(within(table).getByRole("cell", { name: "30" })).toBeInTheDocument();
+    expect(within(table).getByRole("cell", { name: "650" })).toBeInTheDocument();
+    // 指针 §4：ancient_g/gram_g/deviation_pct 是必填三键，渲染的是值本身，不是占位符。
+    expect(within(table).queryByRole("cell", { name: "—" })).not.toBeInTheDocument();
+  });
+
+  it("quality-report 500：正向渲染失败文案与重试按钮，绝不静默成空表", async () => {
+    const user = userEvent.setup();
+    let requests = 0;
+    server.use(
+      http.get("/api/admin/session", () => HttpResponse.json(
+        { enabled: true, authenticated: true, expires_at: 1 })),
+      http.get("/api/admin/quality-report", () => {
+        requests += 1;
+        return new HttpResponse("Internal Server Error", { status: 500 });
+      }),
+    );
+    render(<AdminQualityPage />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("报告加载失败：HTTP 500");
+    expect(within(alert).getByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("table")).toHaveLength(0);
+    await user.click(within(alert).getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(requests).toBe(2));
+  });
+
+  it("quality-report 空数据：诚实空态存在且不是失败文案（正向，两条独立面）", async () => {
+    server.use(
+      http.get("/api/admin/session", () => HttpResponse.json(
+        { enabled: true, authenticated: true, expires_at: 1 })),
+      http.get("/api/admin/quality-report", () => HttpResponse.json(emptyQualityReport)),
+    );
+    render(<AdminQualityPage />);
+    expect((await screen.findAllByText("本库暂无记录。")).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/报告加载失败/)).not.toBeInTheDocument();
+  });
+
+  it("quality-report 401：交回 AdminShell 重新探针，不查标签表也不显示加载失败", async () => {
+    let probes = 0;
+    server.use(
+      http.get("/api/admin/session", () => {
+        probes += 1;
+        return HttpResponse.json(
+          { enabled: true, authenticated: probes < 2, expires_at: probes < 2 ? 1 : null });
+      }),
+      http.get("/api/admin/quality-report", () => HttpResponse.json(
+        { detail: { code: "admin_unauthorized", message: "请先登录管理端" } }, { status: 401 })),
+    );
+    render(<AdminQualityPage />);
+    await waitFor(() => expect(probes).toBe(2));
+    expect(await screen.findByRole("textbox", { name: "管理端口令" })).toBeInTheDocument();
+    expect(screen.queryByText("口令不正确")).not.toBeInTheDocument();
+    expect(screen.queryByText(/报告加载失败/)).not.toBeInTheDocument();
   });
 });
