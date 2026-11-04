@@ -4,7 +4,8 @@ import io
 
 import pytest
 
-from app.admin.reindex import CHUNKING_VERSION, EXTRACT_RULE_VERSION, run_reindex
+from app.admin.reindex import (CHUNKING_VERSION, EMBEDDING_MODEL_VERSION,
+                               EXTRACT_RULE_VERSION, run_reindex)
 from app.db.models import IndexVersion
 
 
@@ -225,6 +226,60 @@ def test_read_paths_without_any_ready_index(admin_client):
     assert preview["target_commit_hash"] == versions["target_commit_hash"]
 
 
+@pytest.mark.parametrize("field", ["chunking_version", "extract_rule_version",
+                                   "embedding_model_version"])
+def test_preview_changed_when_version_field_differs(admin_client, indexed, db_session, field):
+    """F-A（R-M5-14）：`changed`/`will_reuse` 必须用与 POST 相同的复用四元组，而不是只比 hash。
+    构造「commit_hash 相同但某个版本字段不同」（直接改 seed 行的字段，无需进位代码常量）：
+    旧实现（只比 hash）会报 `changed: false, will_reuse: true`——操作者据此确认，POST 却
+    跑一次完整重建（规格 §7「不许让维护者以为索引比实际新」的反面）。"""
+    row = db_session.query(IndexVersion).filter_by(status="ready").one()
+    stale = f"{getattr(row, field)}-stale"
+    setattr(row, field, stale)
+    db_session.commit()
+
+    preview = admin_client.get("/api/admin/reindex/preview").json()
+    assert preview["changed"] is True
+    assert preview["will_reuse"] is False
+    assert preview["target_commit_hash"] == row.commit_hash   # hash 没变，翻红的只有版本字段
+    assert preview["current"][field] == stale                 # 两侧对照能看见是哪个字段旧了
+
+    # 反向：四元组全等 → will_reuse（POST 非 force 会走同一条短路）
+    setattr(row, field, CHUNKING_VERSION if field == "chunking_version"
+            else EXTRACT_RULE_VERSION if field == "extract_rule_version"
+            else EMBEDDING_MODEL_VERSION)
+    db_session.commit()
+    preview = admin_client.get("/api/admin/reindex/preview").json()
+    assert preview["changed"] is False and preview["will_reuse"] is True
+
+
+def test_reuse_shortcut_agrees_with_preview_predicate(admin_client, indexed, db_session):
+    """谓词只许有一份：preview 说 `will_reuse: false` 时，非 force 的 POST 绝不能复用。
+    把 ready 行的抽取规则版本改旧后两头各查一次——这是 F-A 第 2 点「共用 helper」的行为锁。"""
+    row = db_session.query(IndexVersion).filter_by(status="ready").one()
+    before = db_session.query(IndexVersion).count()
+    row.extract_rule_version = f"{EXTRACT_RULE_VERSION}-stale"
+    db_session.commit()
+
+    assert admin_client.get("/api/admin/reindex/preview").json()["will_reuse"] is False
+    body = admin_client.post("/api/admin/reindex", json={}).json()
+    assert body["reused"] is False                      # 旧 SQL 谓词若还独立存在，这里会 reused=true
+    assert db_session.query(IndexVersion).count() == before + 1
+
+
+def test_index_versions_current_uses_same_ready_lookup(admin_client, indexed, db_session):
+    """F-C：`index-versions` 的 top-50 挑 ready 与 `preview` 的直查 ready 收成同一个 helper。
+    force 重建一次制造 retired+ready 两行，两处 `current` 必须是同一行（最新 ready）。"""
+    admin_client.post("/api/admin/reindex", json={"force": True})
+    versions = admin_client.get("/api/admin/index-versions").json()
+    preview = admin_client.get("/api/admin/reindex/preview").json()
+    assert versions["current"]["status"] == "ready"
+    assert preview["current"]["id"] == versions["current"]["id"]
+    ready = db_session.query(IndexVersion).filter_by(status="ready").one()
+    assert ready.id == versions["current"]["id"]        # helper 认定的就是库里唯一 ready 行
+    assert db_session.query(IndexVersion).filter_by(status="retired").count() >= 1
+
+
 # —— Task 8：重建端点的 force、进程内锁与结构化失败 ——
 def test_reindex_reuses_when_hash_unchanged(admin_client, indexed, db_session):
     before = db_session.query(IndexVersion).count()
@@ -274,6 +329,14 @@ def test_reindex_failure_is_structured_500_and_leaves_nothing_published(
 
     def boom(session, embedder=None, *, embedding_model_version=None, force=False,
              fail_after_load=False):
+        # F-B（评审 Minor 1）：原先在碰 session 之前就抛，count==before 是平凡成立——
+        # 只测到 rollback 被调用，测不到它撤销了什么。现在先写入一行可观测的
+        # pending IndexVersion（flush 让它真实到达数据库），再抛。
+        session.add(IndexVersion(commit_hash="0" * 40, status="building",
+                                 chunking_version=CHUNKING_VERSION,
+                                 extract_rule_version=EXTRACT_RULE_VERSION,
+                                 embedding_model_version=EMBEDDING_MODEL_VERSION))
+        session.flush()
         raise RuntimeError("注入失败")
 
     monkeypatch.setattr(admin_api, "run_reindex", boom)
@@ -283,7 +346,9 @@ def test_reindex_failure_is_structured_500_and_leaves_nothing_published(
     assert detail["code"] == "reindex_failed"
     assert set(detail) == {"code", "message"}                        # R-M5-12 两键形状
     db_session.expire_all()
-    assert db_session.query(IndexVersion).count() == before           # 未提交即什么都没发生
+    assert db_session.query(IndexVersion).count() == before           # 刷进去的那行被回滚撤销
+    # 按内容也查不到：不依赖行数恰好相等这种巧合（未来 fixture 加行也会误绿）
+    assert db_session.query(IndexVersion).filter_by(commit_hash="0" * 40).count() == 0
     # 锁必须在异常路径也归还：finally 里漏一行，管理端就永久 409 了。
     assert admin_api.REINDEX_LOCK.acquire(blocking=False), "失败后锁必须已释放"
     admin_api.REINDEX_LOCK.release()

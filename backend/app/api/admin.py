@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 
 from app.admin import auth
 from app.admin.quality import build_quality_report
-from app.admin.reindex import build_corpus, run_reindex
+from app.admin.reindex import (build_corpus, current_ready_version,
+                               default_embedding_model_version, existing_ready,
+                               run_reindex)
 from app.db.models import Formula, FormulaAlias, IndexVersion, PendingFormulaName, QaLog
 from app.db.session import get_session
 from app.git_utils import distilled_commit_hash
@@ -552,13 +554,16 @@ def _version_item(row: IndexVersion | None) -> dict | None:
 
 @router.get("/index-versions")
 def index_versions(session: Session = Depends(get_session)) -> dict:
-    """最近 50 个索引版本，新在前。`current` = 其中第一个 ready 行（没有则 None）。
+    """最近 50 个索引版本，新在前。`current` = 当前 ready 行（没有则 None）。
 
     每行带规格 §4 的四元组（语料 hash / embedding / chunking / extract rule）与
     `notes.skipped`，版本历史表按这些键渲染。
+    「哪行是 current」由 `reindex.current_ready_version` 单点判定（评审 F-C）——
+    与 preview、POST /reindex 的复用短路同一口径；50 行上限只约束下面展示用的
+    `versions` 列表，不再参与 current 的正确性。
     """
     rows = list(session.scalars(select(IndexVersion).order_by(IndexVersion.id.desc()).limit(50)))
-    current = next((r for r in rows if r.status == "ready"), None)
+    current = current_ready_version(session)
     return {"current": _version_item(current), "target_commit_hash": _target_hash(),
             "versions": [_version_item(r) for r in rows]}
 
@@ -573,17 +578,21 @@ def reindex_preview(session: Session = Depends(get_session)) -> dict:
     落地为 `changed` + 两侧行数对照，plan 已把该改写登记给 T16 回写 §4/§7。）
 
     与 §7「无 building 中间态」一致：这里不预测任何进行中的状态，只回答
-    「按当前语料再跑一次会不会产生新版本」——`will_reuse` 就是 POST /reindex
-    在非 force 下的短路条件（四元组全同），两者口径同一个 hash。
+    「按当前语料再跑一次会不会产生新版本」。`changed`/`will_reuse` 用的就是
+    POST /reindex 非 force 的复用短路谓词 `reindex.existing_ready`——四元组
+    （commit_hash / embedding / chunking / extract rule）全同才复用（评审 F-A /
+    R-M5-14：Task 7 brief 的 snippet 只比 commit_hash，规则版本进位而 distilled/
+    未动时会谎报 `changed:false, will_reuse:true`，操作者确认后 POST 却全量重建）。
+    embedding 版本按管理端 POST 的默认链路取 `default_embedding_model_version()`。
     """
     commit_hash = _target_hash()
     corpus = build_corpus()
-    current = session.scalar(select(IndexVersion).where(IndexVersion.status == "ready")
-                             .order_by(IndexVersion.id.desc()))
-    changed = current is None or current.commit_hash != commit_hash
+    current = current_ready_version(session)
+    will_reuse = existing_ready(session, commit_hash,
+                                default_embedding_model_version()) is not None
     return {
-        "changed": changed,
-        "will_reuse": not changed,
+        "changed": not will_reuse,
+        "will_reuse": will_reuse,
         "target_commit_hash": commit_hash,
         "corpus_counts": _corpus_counts(corpus),
         "current": _version_item(current),
