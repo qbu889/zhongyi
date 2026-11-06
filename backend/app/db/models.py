@@ -231,6 +231,8 @@ class PendingFormulaName(Base):
     decision: Mapped[str] = mapped_column(Text, default="pending")   # pending|confirmed_new|merged|noise
     decided_by: Mapped[str | None] = mapped_column(Text)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 人工判定「确认为独立方」时填的规范名。M5-A 只登记，不据此建方（ETL 回流留后）。
+    decided_name: Mapped[str | None] = mapped_column(Text)
 
 
 class IndexVersion(Base):

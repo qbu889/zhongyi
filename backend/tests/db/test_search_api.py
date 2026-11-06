@@ -14,7 +14,9 @@ def client(db_session):
 
 
 def _indexed(client, db_session):
-    assert client.post("/api/admin/reindex").status_code == 200
+    """建索引走服务函数，不再依赖管理端 HTTP 门（M5-A 起 /api/admin/* 需要登录）。"""
+    run_reindex(db_session)
+    db_session.commit()
 
 
 def test_search_returns_ranked_hits_with_anchor(client, db_session):

@@ -43,3 +43,44 @@ def corpus():
     from app.admin.reindex import build_corpus
 
     return build_corpus()
+
+
+@pytest.fixture
+def admin_token(monkeypatch):
+    """给需要管理端的测试用：口令固定、可预测，且测试间不共享。"""
+    from app.config import settings
+    value = "0123456789abcdef0123456789"
+    monkeypatch.setattr(settings, "admin_token", value)
+    return value
+
+
+@pytest.fixture
+def make_client(db_session, admin_token):
+    """返回一个已配好 DB 依赖、带合法口令的 TestClient 工厂。
+
+    `admin_token` 参数只是声明依赖顺序：口令必须在建 client 前就位。
+    """
+    from fastapi.testclient import TestClient
+
+    from app.db.session import get_session
+    from app.main import create_app
+
+    def _make(login: bool = True):
+        app = create_app()
+        app.dependency_overrides[get_session] = lambda: db_session
+        client = TestClient(app)
+        if login:
+            client.post("/api/admin/session", json={"token": admin_token})
+        return client
+
+    return _make
+
+
+@pytest.fixture
+def admin_client(make_client):
+    return make_client()
+
+
+@pytest.fixture
+def anon_client(make_client):
+    return make_client(login=False)

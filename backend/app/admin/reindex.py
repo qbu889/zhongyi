@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -110,14 +110,38 @@ def build_corpus() -> dict[str, Any]:
     }
 
 
-def _existing_ready(session: Session, commit_hash: str, model_version: str) -> IndexVersion | None:
-    return session.scalar(select(IndexVersion).where(and_(
-        IndexVersion.commit_hash == commit_hash,
-        IndexVersion.embedding_model_version == model_version,
-        IndexVersion.chunking_version == CHUNKING_VERSION,
-        IndexVersion.extract_rule_version == EXTRACT_RULE_VERSION,
-        IndexVersion.status == "ready",
-    )))
+def current_ready_version(session: Session) -> IndexVersion | None:
+    """当前生效的 ready 版本行；没有则 None。
+
+    「最新 id 的 ready 行 == 唯一 ready 行」的依据：本文件的发布次序是**先 retire 再
+    insert**（`run_reindex` 里 `update(status=='ready')→'retired'` 在 `session.add(version)`
+    之前），任意时刻表里至多一行 ready、且它总是最新行。admin 侧的
+    `index-versions` / `reindex/preview` 与这里的复用短路共用本函数（评审 F-C），
+    `index-versions` 的 50 行上限从此只影响展示、不再参与「哪行是 current」的正确性。
+    """
+    return session.scalar(select(IndexVersion).where(IndexVersion.status == "ready")
+                          .order_by(IndexVersion.id.desc()))
+
+
+def matches_reuse_quadruple(row: IndexVersion, commit_hash: str,
+                            embedding_model_version: str) -> bool:
+    """复用短路的谓词——**四元组只在这里比较一次**（模块 docstring 的版本恒等式）：
+    语料 hash / embedding / chunking / extract rule 全同才允许空操作。"""
+    return (row.commit_hash == commit_hash
+            and row.embedding_model_version == embedding_model_version
+            and row.chunking_version == CHUNKING_VERSION
+            and row.extract_rule_version == EXTRACT_RULE_VERSION)
+
+
+def existing_ready(session: Session, commit_hash: str,
+                   embedding_model_version: str) -> IndexVersion | None:
+    """命中即「再跑一次非 force 的 POST /reindex 会复用」。谓词单一定义：
+    `run_reindex` 的短路和 `GET /reindex/preview` 的 `changed`/`will_reuse` 都走这里
+    （评审 F-A / R-M5-14），不许在任何一侧复制粘贴四元组比较。"""
+    row = current_ready_version(session)
+    if row is None or not matches_reuse_quadruple(row, commit_hash, embedding_model_version):
+        return None
+    return row
 
 
 def run_reindex(session: Session, embedder=None, *,
@@ -131,7 +155,7 @@ def run_reindex(session: Session, embedder=None, *,
     commit_hash = distilled_commit_hash()
 
     if not force:
-        existing = _existing_ready(session, commit_hash, model_version)
+        existing = existing_ready(session, commit_hash, model_version)
         if existing is not None:
             return ReindexReport(version_id=existing.id, commit_hash=commit_hash,
                                  status="ready", reused=True,
@@ -179,3 +203,13 @@ def indexer_default_embedder():
     from app.embed.embedder import HashingEmbedder
 
     return HashingEmbedder()
+
+
+def default_embedding_model_version() -> str:
+    """管理端不显式传 embedder 时 `run_reindex` 将落到的 embedding 版本。
+
+    preview 与 POST /reindex 走的是同一条默认链路（`app/api/admin.py` 里
+    `run_reindex(session, force=...)`），比对 `existing_ready` 必须用同一个值，
+    否则两边算出来的"会不会复用"又不是同一个谓词。
+    """
+    return getattr(indexer_default_embedder(), "version", EMBEDDING_MODEL_VERSION)
